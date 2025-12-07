@@ -1,0 +1,39 @@
+{
+  "name": "craftarmor",
+  "version": "1.0.0",
+  "description": "CraftArmor ecommerce store built with EverShop",
+  "scripts": {
+    "setup": "evershop install",
+    "build": "evershop build",
+    "start": "evershop start",
+    "dev": "evershop dev",
+    "seed": "evershop seed",
+    "start:debug": "evershop start --debug",
+    "user:create": "evershop user:create",
+    "user:changePassword": "evershop user:changePassword"
+  },
+  "workspaces": [
+    "extensions/*",
+    "themes/*"
+  ],
+  "keywords": [
+    "ecommerce",
+    "evershop",
+    "craftarmor"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@evershop/evershop": "^2.1.0"
+  },
+  "devDependencies": {
+    "@parcel/watcher": "^2.5.1",
+    "@types/config": "^3.3.5",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "@types/react": "^19.2.7",
+    "execa": "^9.6.1",
+    "typescript": "^5.9.3"
+  }
+}
