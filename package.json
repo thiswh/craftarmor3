@@ -1,13 +1,14 @@
 {
-  "name": "craftarmor",
+  "name": "craftarmor_3_0",
   "version": "1.0.0",
-  "description": "CraftArmor ecommerce store built with EverShop",
+  "main": "index.js",
   "scripts": {
     "setup": "evershop install",
     "build": "evershop build",
     "start": "evershop start",
     "dev": "evershop dev",
     "seed": "evershop seed",
+    "seed:all": "evershop seed --all",
     "start:debug": "evershop start --debug",
     "user:create": "evershop user:create",
     "user:changePassword": "evershop user:changePassword"
@@ -16,13 +17,18 @@
     "extensions/*",
     "themes/*"
   ],
-  "keywords": [
-    "ecommerce",
-    "evershop",
-    "craftarmor"
-  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thiswh/craftarmor3.git"
+  },
+  "keywords": [],
   "author": "",
   "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/thiswh/craftarmor3/issues"
+  },
+  "homepage": "https://github.com/thiswh/craftarmor3#readme",
+  "description": "",
   "dependencies": {
     "@evershop/evershop": "^2.1.0"
   },
@@ -30,8 +36,8 @@
     "@parcel/watcher": "^2.5.1",
     "@types/config": "^3.3.5",
     "@types/express": "^5.0.6",
-    "@types/node": "^24.10.1",
-    "@types/pg": "^8.15.6",
+    "@types/node": "^25.0.0",
+    "@types/pg": "^8.16.0",
     "@types/react": "^19.2.7",
     "execa": "^9.6.1",
     "typescript": "^5.9.3"

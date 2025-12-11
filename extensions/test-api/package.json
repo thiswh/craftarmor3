@@ -1,0 +1,18 @@
+{
+  "name": "test-api",
+  "version": "1.0.0",
+  "description": "Test extension that returns JSON at /api/test endpoint",
+  "type": "module",
+  "main": "dist/bootstrap.js",
+  "scripts": {
+    "compile": "tsc"
+  },
+  "dependencies": {
+    "@evershop/evershop": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "typescript": "^5.9.3"
+  }
+}
+

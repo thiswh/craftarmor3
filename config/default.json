@@ -1,0 +1,162 @@
+{
+  "shop": {
+    "name": "CraftArmor",
+    "language": "ru",
+    "timezone": "UTC",
+    "currency": "RUB",
+    "weightUnit": "kg",
+    "homeUrl": "http://localhost:3000"
+  },
+  "system": {
+    "file_storage": "local",
+    "upload_allowed_mime_types": [
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "image/avif"
+    ],
+    "theme": "craftarmor",
+    "extensions": [
+      {
+        "name": "test-api",
+        "resolve": "extensions/test-api",
+        "enabled": true,
+        "priority": 10
+      }
+    ],
+    "session": {
+      "maxAge": 86400000,
+      "resave": false,
+      "saveUninitialized": false,
+      "cookieSecret": "change-this-secret-key-in-production",
+      "cookieName": "sid"
+    }
+  },
+  "catalog": {
+    "product": {
+      "image": {
+        "width": 1200,
+        "height": 1200
+      }
+    },
+    "showOutOfStockProduct": false,
+    "collectionPageSize": 20
+  },
+  "checkout": {
+    "showShippingNote": true
+  },
+  "pricing": {
+    "rounding": "round",
+    "precision": 2,
+    "tax": {
+      "rounding": "round",
+      "precision": 2,
+      "round_level": "total",
+      "price_including_tax": true
+    }
+  },
+  "themeConfig": {
+    "logo": {
+      "alt": "CraftArmor Logo",
+      "src": "/logo.png",
+      "width": 200,
+      "height": 50
+    },
+    "headTags": {
+      "links": [
+        {
+          "rel": "icon",
+          "href": "/favicon.ico",
+          "type": "image/x-icon"
+        }
+      ],
+      "metas": [
+        {
+          "name": "viewport",
+          "content": "width=device-width, initial-scale=1"
+        }
+      ]
+    },
+    "copyRight": "© 2025 CraftArmor. All Rights Reserved."
+  },
+  "oms": {
+    "order": {
+      "status": {
+        "new": {
+          "name": "New",
+          "badge": "default",
+          "progress": "incomplete",
+          "isDefault": true,
+          "next": ["processing", "canceled"]
+        },
+        "processing": {
+          "name": "Processing",
+          "badge": "default",
+          "progress": "incomplete",
+          "next": ["completed", "canceled"]
+        },
+        "completed": {
+          "name": "Completed",
+          "badge": "success",
+          "progress": "complete",
+          "next": ["closed"]
+        },
+        "canceled": {
+          "name": "Canceled",
+          "badge": "critical",
+          "progress": "complete",
+          "next": []
+        },
+        "closed": {
+          "name": "Closed",
+          "badge": "default",
+          "progress": "complete",
+          "next": []
+        }
+      },
+      "paymentStatus": {
+        "pending": {
+          "name": "Pending",
+          "badge": "default",
+          "progress": "incomplete",
+          "isDefault": true
+        },
+        "paid": {
+          "name": "Paid",
+          "badge": "success",
+          "progress": "complete"
+        },
+        "failed": {
+          "name": "Failed",
+          "badge": "critical",
+          "progress": "failed"
+        }
+      },
+      "shipmentStatus": {
+        "pending": {
+          "name": "Pending",
+          "badge": "default",
+          "progress": "incomplete",
+          "isDefault": true
+        },
+        "shipped": {
+          "name": "Shipped",
+          "badge": "attention",
+          "progress": "complete"
+        },
+        "delivered": {
+          "name": "Delivered",
+          "badge": "success",
+          "progress": "complete"
+        }
+      }
+    },
+    "carriers": {
+      "default": {
+        "name": "Default"
+      }
+    }
+  }
+}
+
