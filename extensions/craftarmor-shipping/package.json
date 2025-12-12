@@ -1,0 +1,20 @@
+{
+  "name": "craftarmor-shipping",
+  "version": "1.0.0",
+  "description": "EverShop extension for CDEK, Boxberry and Russian Post delivery integration",
+  "type": "module",
+  "main": "dist/bootstrap.js",
+  "scripts": {
+    "build": "tsc",
+    "compile": "tsc"
+  },
+  "dependencies": {
+    "@evershop/evershop": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "typescript": "^5.9.3"
+  }
+}
+
+

@@ -1,0 +1,7 @@
+{
+  "methods": ["POST"],
+  "path": "/delivery/calculate",
+  "access": "public"
+}
+
+
