@@ -6,9 +6,10 @@ import { DeliveryPoint } from '../DeliveryPointRepository.js';
 
 export class BoxberryService {
   private apiKey: string;
-  private readonly apiUrl = 'https://api.boxberry.ru/json.php';
+  private readonly apiUrl: string;
 
   constructor() {
+    this.apiUrl = process.env.BOXBERRY_API_URL || 'https://api.boxberry.ru/json.php';
     this.apiKey = process.env.BOXBERRY_API_KEY || '';
     
     if (!this.apiKey) {

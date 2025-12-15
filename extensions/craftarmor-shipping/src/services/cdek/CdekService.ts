@@ -8,9 +8,10 @@ export class CdekService {
   private clientSecret: string;
   private accessToken?: string;
   private tokenExpiresAt?: Date;
-  private readonly apiUrl = 'https://api.cdek.ru';
+  private readonly apiUrl: string;
 
   constructor() {
+    this.apiUrl = process.env.CDEK_API_URL || 'https://api.cdek.ru';
     this.clientId = process.env.CDEK_CLIENT_ID || '';
     this.clientSecret = process.env.CDEK_CLIENT_SECRET || '';
     

@@ -6,10 +6,12 @@ import { DeliveryPoint } from '../DeliveryPointRepository.js';
 export class RussianPostService {
   private token: string;
   private key: string;
-  private readonly otpravkaApiUrl = 'https://otpravka-api.pochta.ru';
-  private readonly tariffApiUrl = 'https://tariff.pochta.ru';
+  private readonly otpravkaApiUrl: string;
+  private readonly tariffApiUrl: string;
 
   constructor() {
+    this.otpravkaApiUrl = process.env.RUSPOST_API_URL || 'https://otpravka-api.pochta.ru';
+    this.tariffApiUrl = process.env.RUSPOST_TARIFF_URL || 'https://tariff.pochta.ru';
     this.token = process.env.RUSPOST_TOKEN || '';
     this.key = process.env.RUSPOST_KEY || '';
     
