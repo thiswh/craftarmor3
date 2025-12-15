@@ -191,8 +191,9 @@ themes/craftarmor/
 
 ### Папка dist для темы
 
-- **В dev режиме** (`npm run dev`) - создается автоматически
-- **В production** (`npm run build`) - требуется наличие папки `dist/`
+- **В dev режиме** (`npm run dev`) - компилируется автоматически из `src/`, папка `dist/` не обязательна
+- **В production** (`npm run build`) - требуется наличие папки `dist/` со скомпилированными файлами
+- **Компиляция:** Темы компилируются автоматически EverShop, ручная компиляция не требуется в dev режиме
 
 Если в теме нет компонентов (пустая папка `src/`), можно создать пустую папку `dist/` вручную.
 
@@ -212,14 +213,24 @@ extensions/test-api/
 │   ├── pages/                # Frontend страницы (опционально)
 │   │   ├── admin/            # Админ панель
 │   │   └── frontStore/       # Storefront
-│   ├── migration/            # Миграции БД (опционально)
+│   ├── migration/            # Миграции БД (ВАЖНО: в src/migration/)
+│   │   └── Version-1.0.0.ts  # Формат: Version-X.Y.Z.ts
 │   ├── services/             # Сервисы (опционально)
 │   ├── jobs/                 # Cron jobs (опционально)
 │   └── bootstrap.ts          # Инициализация расширения
-├── dist/                     # Скомпилированный код (автоматически)
+├── dist/                     # Скомпилированный код
+│   ├── migration/            # Скомпилированные миграции (обязательно!)
+│   │   └── Version-1.0.0.js
+│   └── ...                   # Остальные файлы
 ├── package.json
 └── tsconfig.json
 ```
+
+**Важно о миграциях:**
+- Миграции должны быть в `src/migration/` (не `migrations`!)
+- Имя файла: `Version-X.Y.Z.ts` (например, `Version-1.0.0.ts`)
+- После компиляции должны быть в `dist/migration/Version-X.Y.Z.js`
+- Миграции применяются автоматически при запуске сервера
 
 ### package.json расширения
 
@@ -279,6 +290,71 @@ export default function bootstrap() {
   console.log('Extension loaded successfully!');
 }
 ```
+
+### Миграции базы данных
+
+**Структура:**
+- Миграции находятся в `src/migration/` (единственное число!)
+- Формат имени файла: `Version-X.Y.Z.ts` (например, `Version-1.0.0.ts`)
+- После компиляции должны быть в `dist/migration/Version-X.Y.Z.js`
+
+**Формат миграции:**
+```typescript
+import { PoolClient } from 'pg';
+
+export default async function (connection: PoolClient) {
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS my_table (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL
+    )
+  `);
+}
+```
+
+**Применение:**
+- Миграции применяются автоматически при запуске сервера (`npm run dev` или `npm run start`)
+- EverShop проверяет версию и применяет только новые миграции
+- Информация о примененных миграциях хранится в таблице `migration` в БД
+
+**Важно:**
+- Миграции должны быть скомпилированы в `dist/migration/` перед запуском
+- Для этого нужно запустить `npm run build` в папке расширения
+- В dev режиме остальные файлы компилируются автоматически, но миграции требуют ручной компиляции
+
+### Cron Jobs
+
+**Регистрация cron job в bootstrap.ts:**
+```typescript
+import { registerJob } from '@evershop/evershop/lib/cronjob';
+import syncData from './jobs/syncData.js';
+import * as path from 'path';
+import * as url from 'url';
+import * as fs from 'fs';
+
+export default async function bootstrap() {
+  // Получаем путь к скомпилированному файлу задачи
+  const __filename = url.fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const jobPath = path.resolve(__dirname, 'jobs', 'syncData.js');
+  
+  // Проверяем, что файл существует
+  if (!fs.existsSync(jobPath)) {
+    console.warn(`Job file not found: ${jobPath}`);
+    return;
+  }
+  
+  // Регистрируем cron job
+  registerJob({
+    name: 'syncData',
+    resolve: jobPath,
+    schedule: '0 3 * * *', // Каждый день в 03:00
+    enabled: true
+  });
+}
+```
+
+**Формат cron выражения:** Стандартный cron формат (например, `0 3 * * *` = каждый день в 03:00)
 
 ---
 
@@ -389,14 +465,35 @@ npm run user:changePassword
 
 ### Компиляция расширения/темы
 
+**Расширения:**
+
 ```bash
-# Из папки расширения/темы
+# Из папки расширения (для миграций обязательно!)
 cd extensions/test-api
-npm run compile
+npm run build
 
 # Или из корня (компилирует все)
 npm run build
 ```
+
+**Важно для расширений:**
+- В dev режиме (`npm run dev`): EverShop компилирует файлы из `src/` на лету
+- **НО:** Миграции должны быть скомпилированы в `dist/migration/` вручную!
+- Для миграций нужно запустить `npm run build` в папке расширения перед запуском сервера
+- В production: требуется полностью скомпилированная папка `dist/`
+
+**Темы:**
+
+```bash
+# Темы компилируются автоматически EverShop
+# Ручная компиляция не требуется в dev режиме
+# В production компилируется при npm run build в корне
+```
+
+**Важно для тем:**
+- В dev режиме: компилируется автоматически из `src/`, `dist/` не обязательна
+- В production: компилируется автоматически при `npm run build` в корне проекта
+- Ручная компиляция не требуется
 
 ---
 
@@ -418,9 +515,28 @@ npm run build
 
 ### 2. Папка dist
 
-- **В dev режиме** (`npm run dev`) - создается автоматически
-- **В production** (`npm run build`) - требуется наличие папки `dist/`
+**Для расширений:**
+- **В dev режиме** (`npm run dev`): 
+  - Остальные файлы компилируются автоматически из `src/`
+  - **НО:** Миграции должны быть в `dist/migration/` (требуется ручная компиляция!)
+- **В production** (`npm run build`): требуется полностью скомпилированная папка `dist/`
+
+**Для тем:**
+- **В dev режиме** (`npm run dev`): компилируется автоматически из `src/`, `dist/` не обязательна
+- **В production** (`npm run build`): компилируется автоматически при сборке проекта
 - Если в теме нет компонентов, можно создать пустую папку `dist/` вручную
+
+### 2.1. Структура компиляции
+
+**Расширения:**
+- `src/` → компилируется в → `dist/` (с `rootDir: "src"`)
+- Миграции: `src/migration/Version-X.Y.Z.ts` → `dist/migration/Version-X.Y.Z.js`
+- Остальные файлы: `src/api/` → `dist/api/`, `src/services/` → `dist/services/` и т.д.
+
+**Темы:**
+- `src/` → компилируется в → `dist/` (с `rootDir: "src"`)
+- Компоненты: `src/components/` → `dist/components/`
+- Страницы: `src/pages/` → `dist/pages/`
 
 ### 3. Конфигурация темы
 
@@ -448,12 +564,26 @@ npm run build
 - Темы изменяют внешний вид (компоненты UI)
 - Оба могут быть в workspaces и иметь свои зависимости
 
-### 7. TypeScript
+### 7. TypeScript и компиляция
 
+**Расширения:**
 - Все файлы в `src/` - TypeScript
 - Компилируются в JavaScript в `dist/`
-- В dev режиме компиляция происходит автоматически
-- В production нужно компилировать перед запуском
+- В dev режиме: компиляция происходит автоматически для большинства файлов
+- **Исключение:** Миграции должны быть скомпилированы вручную в `dist/migration/`
+- В production: нужно компилировать перед запуском (`npm run build` в папке расширения)
+
+**Темы:**
+- Все файлы в `src/` - TypeScript
+- Компилируются в JavaScript в `dist/`
+- В dev режиме: компиляция происходит автоматически
+- В production: компилируется автоматически при `npm run build` в корне проекта
+- Ручная компиляция не требуется
+
+**Настройка tsconfig.json:**
+- `rootDir: "src"` - обязательно для правильной структуры
+- `outDir: "./dist"` - папка для скомпилированных файлов
+- `include: ["src"]` или `include: ["src/**/*"]` - что компилировать
 
 ### 8. Конфигурация
 

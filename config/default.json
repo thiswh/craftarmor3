@@ -23,6 +23,12 @@
         "resolve": "extensions/test-api",
         "enabled": true,
         "priority": 10
+      },
+      {
+        "name": "craftarmor-shipping",
+        "resolve": "extensions/craftarmor-shipping",
+        "enabled": true,
+        "priority": 20
       }
     ],
     "session": {
