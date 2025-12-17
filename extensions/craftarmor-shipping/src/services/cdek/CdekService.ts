@@ -75,17 +75,29 @@ export class CdekService {
     });
 
     if (!response.ok) {
-      throw new Error(`CDEK API error: ${response.statusText}`);
+      const errorText = await response.text().catch(() => response.statusText || 'Unknown error');
+      throw new Error(`CDEK API error: ${response.status} ${errorText}`);
     }
 
     const data = await response.json();
     
+    if (!Array.isArray(data)) {
+      throw new Error(`CDEK API returned invalid data format. Expected array, got ${typeof data}`);
+    }
+    
     // Преобразуем данные CDEK в наш формат
-    return data.map((point: any) => ({
-      serviceCode: 'cdek',
-      externalId: point.code,
-      latitude: parseFloat(point.location.latitude),
-      longitude: parseFloat(point.location.longitude),
+    return data
+      .filter((point: any) => {
+        // Фильтруем пункты без координат
+        const lat = parseFloat(point.location?.latitude);
+        const lng = parseFloat(point.location?.longitude);
+        return !isNaN(lat) && !isNaN(lng) && point.location;
+      })
+      .map((point: any) => ({
+        serviceCode: 'cdek',
+        externalId: point.code,
+        latitude: parseFloat(point.location.latitude),
+        longitude: parseFloat(point.location.longitude),
       address: point.location.address || '',
       city: point.location.city || '',
       region: point.location.region || '',

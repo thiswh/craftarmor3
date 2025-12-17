@@ -23,10 +23,12 @@ export default async function postCalculate(request: Request, response: Response
 
     // Валидация
     if (!pointId || !serviceCode || !weight) {
-      return response.status(400).json({
+      response.$body = {
         success: false,
         message: 'Required parameters: pointId, serviceCode, weight'
-      });
+      };
+      response.statusCode = 400;
+      return;
     }
 
     // Получаем информацию о пункте выдачи
@@ -34,10 +36,12 @@ export default async function postCalculate(request: Request, response: Response
     const point = await repository.getPointById(pointId);
 
     if (!point) {
-      return response.status(404).json({
+      response.$body = {
         success: false,
         message: 'Delivery point not found'
-      });
+      };
+      response.statusCode = 404;
+      return;
     }
 
     // Получаем настройки отправителя из конфига или переменных окружения
@@ -45,10 +49,12 @@ export default async function postCalculate(request: Request, response: Response
     const senderCity = process.env.SHOP_SENDER_CITY || '';
 
     if (!senderPostalCode) {
-      return response.status(500).json({
+      response.$body = {
         success: false,
         message: 'Shop sender postal code not configured'
-      });
+      };
+      response.statusCode = 500;
+      return;
     }
 
     let result;
@@ -102,13 +108,16 @@ export default async function postCalculate(request: Request, response: Response
         }
 
         default:
-          return response.status(400).json({
+          response.$body = {
             success: false,
             message: `Unknown service code: ${serviceCode}`
-          });
+          };
+          response.statusCode = 400;
+          return;
       }
 
-      response.json({
+      // Сохраняем данные в response.$body для EverShop middleware apiResponse
+      response.$body = {
         success: true,
         data: {
           point: {
@@ -119,22 +128,24 @@ export default async function postCalculate(request: Request, response: Response
           },
           calculation: result
         }
-      });
+      };
     } catch (calcError: any) {
       // Если расчет не удался, возвращаем ошибку, но не падаем
       console.error(`[postCalculate] Calculation error for ${serviceCode}:`, calcError);
-      response.status(500).json({
+      response.$body = {
         success: false,
         message: `Failed to calculate delivery cost: ${calcError.message}`
-      });
+      };
+      response.statusCode = 500;
     }
   } catch (error: any) {
     console.error('[postCalculate] Error:', error);
-    response.status(500).json({
+    response.$body = {
       success: false,
       message: 'Internal server error',
       error: error.message
-    });
+    };
+    response.statusCode = 500;
   }
 }
 

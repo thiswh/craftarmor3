@@ -165,6 +165,80 @@ $response | ConvertTo-Json -Depth 10
 
 ---
 
+## 3. POST /api/delivery/sync
+
+Ручной запуск синхронизации пунктов выдачи из всех служб доставки.
+
+### Тело запроса (JSON, опционально):
+```json
+{
+  "services": ["cdek", "russianpost", "boxberry"]
+}
+```
+
+Если `services` не указан, синхронизируются все службы.
+
+### Примеры запросов:
+
+#### Синхронизация всех служб:
+```powershell
+Invoke-RestMethod -Uri "http://localhost:3000/api/delivery/sync" -Method POST -ContentType "application/json"
+```
+
+#### Синхронизация только CDEK:
+```powershell
+$body = @{
+    services = @("cdek")
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:3000/api/delivery/sync" -Method POST -ContentType "application/json" -Body $body
+```
+
+#### Синхронизация CDEK и Почты России:
+```powershell
+$body = @{
+    services = @("cdek", "russianpost")
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:3000/api/delivery/sync" -Method POST -ContentType "application/json" -Body $body
+```
+
+### Пример ответа:
+```json
+{
+  "success": true,
+  "services": {
+    "cdek": {
+      "success": true,
+      "pointsCount": 1523
+    },
+    "russianpost": {
+      "success": true,
+      "pointsCount": 4200
+    },
+    "boxberry": {
+      "success": false,
+      "error": "Boxberry API key not configured"
+    }
+  },
+  "totalPoints": 5723,
+  "errors": [
+    {
+      "service": "boxberry",
+      "error": "Boxberry API key not configured"
+    }
+  ],
+  "message": "Synchronization completed with 1 error(s). Total points: 5723"
+}
+```
+
+**Важно:**
+- Endpoint требует авторизации (`"access": "admin"`)
+- Синхронизация может занять время (особенно для всех служб)
+- Ошибки одной службы не останавливают синхронизацию других
+
+---
+
 ## Проверка ошибок
 
 ### Ошибка валидации (400):

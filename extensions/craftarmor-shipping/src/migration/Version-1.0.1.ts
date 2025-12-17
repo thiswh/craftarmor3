@@ -5,6 +5,9 @@
 import { PoolClient } from 'pg';
 
 export default async function (connection: PoolClient) {
+  // Включаем PostGIS расширение для геопространственных запросов
+  await connection.query(`CREATE EXTENSION IF NOT EXISTS postgis`);
+
   // Создаем таблицу delivery_service (службы доставки)
   await connection.query(`
     CREATE TABLE IF NOT EXISTS delivery_service (
@@ -42,11 +45,33 @@ export default async function (connection: PoolClient) {
     )
   `);
 
-  // Создаем индексы для быстрого поиска
-  // Индекс для поиска по координатам (для запросов по границам карты)
+  // Добавляем geometry колонку для PostGIS (если еще не существует)
   await connection.query(`
-    CREATE INDEX IF NOT EXISTS idx_delivery_point_coordinates 
-    ON delivery_point(latitude, longitude)
+    DO $$ 
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'delivery_point' AND column_name = 'location'
+      ) THEN
+        ALTER TABLE delivery_point 
+        ADD COLUMN location geometry(Point, 4326);
+      END IF;
+    END $$;
+  `);
+
+  // Заполняем geometry колонку существующими координатами
+  await connection.query(`
+    UPDATE delivery_point 
+    SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
+    WHERE location IS NULL
+  `);
+
+  // Создаем индексы для быстрого поиска
+  // GiST индекс для геопространственных запросов (PostGIS)
+  await connection.query(`
+    CREATE INDEX IF NOT EXISTS idx_delivery_point_location_gist 
+    ON delivery_point USING GIST (location)
+    WHERE is_active = true
   `);
 
   // Индекс для поиска по городу

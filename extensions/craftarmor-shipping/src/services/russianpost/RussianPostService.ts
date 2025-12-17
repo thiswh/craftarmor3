@@ -38,17 +38,29 @@ export class RussianPostService {
     });
 
     if (!response.ok) {
-      throw new Error(`Russian Post API error: ${response.statusText}`);
+      const errorText = await response.text().catch(() => response.statusText || 'Unknown error');
+      throw new Error(`Russian Post API error: ${response.status} ${errorText}`);
     }
 
     const data = await response.json();
     
+    if (!Array.isArray(data)) {
+      throw new Error(`Russian Post API returned invalid data format. Expected array, got ${typeof data}`);
+    }
+    
     // Преобразуем данные Почты России в наш формат
-    return data.map((point: any) => ({
-      serviceCode: 'russianpost',
-      externalId: point.postalCode || point.index || String(point.id),
-      latitude: parseFloat(point.coordinates?.latitude || '0'),
-      longitude: parseFloat(point.coordinates?.longitude || '0'),
+    return data
+      .filter((point: any) => {
+        // Фильтруем пункты без координат
+        const lat = parseFloat(point.coordinates?.latitude);
+        const lng = parseFloat(point.coordinates?.longitude);
+        return !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0;
+      })
+      .map((point: any) => ({
+        serviceCode: 'russianpost',
+        externalId: point.postalCode || point.index || String(point.id),
+        latitude: parseFloat(point.coordinates.latitude),
+        longitude: parseFloat(point.coordinates.longitude),
       address: point.address || '',
       city: point.city || '',
       region: point.region || '',

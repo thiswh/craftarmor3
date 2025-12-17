@@ -217,6 +217,8 @@ extensions/test-api/
 │   │   └── Version-1.0.0.ts  # Формат: Version-X.Y.Z.ts
 │   ├── services/             # Сервисы (опционально)
 │   ├── jobs/                 # Cron jobs (опционально)
+│   ├── types/                # TypeScript типы (опционально)
+│   │   └── express.d.ts      # Расширения типов
 │   └── bootstrap.ts          # Инициализация расширения
 ├── dist/                     # Скомпилированный код
 │   ├── migration/            # Скомпилированные миграции (обязательно!)

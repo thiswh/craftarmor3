@@ -12,20 +12,24 @@ export default async function getPoints(request: Request, response: Response) {
     const services = request.query.services as string | undefined;
 
     if (!bounds) {
-      return response.status(400).json({
+      response.$body = {
         success: false,
         message: 'Bounds parameter is required. Format: minLat,minLng,maxLat,maxLng'
-      });
+      };
+      response.statusCode = 400;
+      return;
     }
 
     // Парсим границы карты
     const [minLat, minLng, maxLat, maxLng] = bounds.split(',').map(parseFloat);
 
     if (isNaN(minLat) || isNaN(minLng) || isNaN(maxLat) || isNaN(maxLng)) {
-      return response.status(400).json({
+      response.$body = {
         success: false,
         message: 'Invalid bounds format. Expected: minLat,minLng,maxLat,maxLng'
-      });
+      };
+      response.statusCode = 400;
+      return;
     }
 
     // Парсим фильтр по службам доставки
@@ -34,9 +38,9 @@ export default async function getPoints(request: Request, response: Response) {
       serviceCodes = services.split(',').map(s => s.trim());
     }
 
-    // Получаем пункты из БД
+    // Получаем краткую информацию о пунктах из БД (для быстрой отрисовки карты)
     const repository = new DeliveryPointRepository(pool);
-    const points = await repository.getPointsByBounds(
+    const points = await repository.getPointsSummary(
       minLat,
       minLng,
       maxLat,
@@ -44,7 +48,9 @@ export default async function getPoints(request: Request, response: Response) {
       serviceCodes
     );
 
-    response.json({
+    // Сохраняем данные в response.$body для EverShop middleware apiResponse
+    // Middleware apiResponse сам отправит ответ на основе response.$body
+    response.$body = {
       success: true,
       data: {
         points,
@@ -56,14 +62,16 @@ export default async function getPoints(request: Request, response: Response) {
           maxLng
         }
       }
-    });
+    };
   } catch (error: any) {
     console.error('[getPoints] Error:', error);
-    response.status(500).json({
+    // Для ошибок также используем response.$body
+    response.$body = {
       success: false,
       message: 'Internal server error',
       error: error.message
-    });
+    };
+    response.statusCode = 500;
   }
 }
 
