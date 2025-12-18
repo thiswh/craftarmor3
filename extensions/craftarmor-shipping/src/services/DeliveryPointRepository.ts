@@ -49,15 +49,27 @@ export class DeliveryPointRepository {
         return;
       }
 
+      // Получаем текущее количество активных точек ДО синхронизации
+      const beforeCountResult = await client.query(
+        `SELECT COUNT(*) as count FROM delivery_point WHERE service_id = $1 AND is_active = true`,
+        [serviceId]
+      );
+      const activePointsBefore = parseInt(beforeCountResult.rows[0].count);
+
+      console.log(`[DeliveryPointRepository] ${serviceCode}: Starting sync. Active points before: ${activePointsBefore}, New points to sync: ${points.length}`);
+
       const externalIds = points.map(p => p.externalId);
 
       // Отмечаем все существующие пункты как неактивные (только если есть новые данные)
-      await client.query(
+      const updateResult = await client.query(
         `UPDATE delivery_point 
          SET is_active = false, updated_at = NOW()
-         WHERE service_id = $1 AND external_id != ALL($2::text[])`,
+         WHERE service_id = $1 AND external_id != ALL($2::text[])
+         RETURNING id`,
         [serviceId, externalIds]
       );
+      const markedInactiveCount = updateResult.rowCount || 0;
+      console.log(`[DeliveryPointRepository] ${serviceCode}: Marked ${markedInactiveCount} old points as inactive`);
 
       // Подготавливаем данные для bulk INSERT
       // Разбиваем на батчи по 500 пунктов, чтобы не превысить лимит параметров PostgreSQL
@@ -153,6 +165,23 @@ export class DeliveryPointRepository {
       }
 
       await client.query('COMMIT');
+      
+      // Получаем итоговое количество активных точек ПОСЛЕ синхронизации
+      const afterCountResult = await client.query(
+        `SELECT COUNT(*) as count FROM delivery_point WHERE service_id = $1 AND is_active = true`,
+        [serviceId]
+      );
+      const activePointsAfter = parseInt(afterCountResult.rows[0].count);
+      
+      // Получаем общее количество точек (активных + неактивных)
+      const totalCountResult = await client.query(
+        `SELECT COUNT(*) as count FROM delivery_point WHERE service_id = $1`,
+        [serviceId]
+      );
+      const totalPoints = parseInt(totalCountResult.rows[0].count);
+      
+      console.log(`[DeliveryPointRepository] ${serviceCode}: Sync completed. Active points: ${activePointsBefore} → ${activePointsAfter} (${activePointsAfter - activePointsBefore > 0 ? '+' : ''}${activePointsAfter - activePointsBefore}), Total points in DB: ${totalPoints}`);
+      
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

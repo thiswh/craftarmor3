@@ -2,6 +2,9 @@
  * API endpoint для ручного запуска синхронизации пунктов выдачи
  * POST /api/delivery/sync
  * 
+ * Этот файл зависит от bodyParser.ts (указано в имени файла [bodyParser])
+ * EverShop автоматически применяет bodyParser перед этим handler'ом
+ * 
  * Параметры запроса (опционально):
  * - services: массив кодов служб для синхронизации (например: ["cdek", "russianpost"])
  *   Если не указано, синхронизируются все активные службы
@@ -21,7 +24,7 @@ export default async function postSync(request: Request, response: Response) {
   }
 
   try {
-    // Безопасная обработка body (может быть undefined если запрос без тела)
+    // Body уже распарсен middleware bodyParser.ts
     const body = request.body || {};
     const { services } = body;
     
@@ -34,8 +37,10 @@ export default async function postSync(request: Request, response: Response) {
     };
 
     // Определяем, какие службы синхронизировать
-    const servicesToSync = services && Array.isArray(services) 
-      ? services 
+    // Если services передан и это массив, используем его
+    // Если services не передан или не массив, синхронизируем все
+    const servicesToSync: string[] = services && Array.isArray(services) && services.length > 0
+      ? services
       : ['cdek', 'russianpost', 'boxberry'];
 
     // Синхронизация CDEK
