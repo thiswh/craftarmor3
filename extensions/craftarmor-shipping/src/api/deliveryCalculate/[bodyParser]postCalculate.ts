@@ -1,6 +1,9 @@
 /**
  * API endpoint для расчета стоимости доставки
  * POST /api/delivery/calculate
+ * 
+ * Этот файл зависит от bodyParser.ts (указано в имени файла [bodyParser])
+ * EverShop автоматически применяет bodyParser перед этим handler'ом
  */
 import { Request, Response } from 'express';
 import { pool } from '@evershop/evershop/lib/postgres';
@@ -11,6 +14,9 @@ import { BoxberryService } from '../../services/boxberry/BoxberryService.js';
 
 export default async function postCalculate(request: Request, response: Response) {
   try {
+    // Body уже распарсен middleware bodyParser.ts
+    const body = request.body || {};
+    
     const {
       pointId,
       serviceCode,
@@ -18,10 +24,11 @@ export default async function postCalculate(request: Request, response: Response
       length,
       width,
       height,
-      declaredValue
-    } = request.body;
+      declaredValue,
+      phoneNumber
+    } = body;
 
-    // Валидация
+    // Валидация обязательных параметров
     if (!pointId || !serviceCode || !weight) {
       response.$body = {
         success: false,
@@ -29,6 +36,52 @@ export default async function postCalculate(request: Request, response: Response
       };
       response.statusCode = 400;
       return;
+    }
+
+    // Валидация веса
+    const weightNum = parseFloat(weight);
+    if (isNaN(weightNum) || weightNum <= 0 || weightNum > 1000) {
+      response.$body = {
+        success: false,
+        message: 'Weight must be a positive number between 0 and 1000 kg'
+      };
+      response.statusCode = 400;
+      return;
+    }
+
+    // Валидация размеров (если указаны)
+    if (length !== undefined) {
+      const lengthNum = parseFloat(length);
+      if (isNaN(lengthNum) || lengthNum <= 0 || lengthNum > 1000) {
+        response.$body = {
+          success: false,
+          message: 'Length must be a positive number between 0 and 1000 cm'
+        };
+        response.statusCode = 400;
+        return;
+      }
+    }
+    if (width !== undefined) {
+      const widthNum = parseFloat(width);
+      if (isNaN(widthNum) || widthNum <= 0 || widthNum > 1000) {
+        response.$body = {
+          success: false,
+          message: 'Width must be a positive number between 0 and 1000 cm'
+        };
+        response.statusCode = 400;
+        return;
+      }
+    }
+    if (height !== undefined) {
+      const heightNum = parseFloat(height);
+      if (isNaN(heightNum) || heightNum <= 0 || heightNum > 1000) {
+        response.$body = {
+          success: false,
+          message: 'Height must be a positive number between 0 and 1000 cm'
+        };
+        response.statusCode = 400;
+        return;
+      }
     }
 
     // Получаем информацию о пункте выдачи
@@ -63,21 +116,30 @@ export default async function postCalculate(request: Request, response: Response
       switch (serviceCode) {
         case 'cdek': {
           const cdekService = new CdekService();
+          
+          // Для CDEK требуется либо postal_code, либо city для to_location
+          if (!point.postal_code && !point.city) {
+            throw new Error('CDEK calculation requires either postal_code or city for delivery point');
+          }
+          
           result = await cdekService.calculateDelivery({
             fromLocation: {
               postalCode: senderPostalCode
             },
             toLocation: {
               postalCode: point.postal_code || undefined,
-              city: point.city,
-              address: point.address
+              city: point.city || undefined,
+              address: point.address || undefined,
+              region: point.region || undefined
             },
             packages: [{
-              weight: parseFloat(weight),
+              weight: weightNum,
               length: length ? parseFloat(length) : undefined,
               width: width ? parseFloat(width) : undefined,
               height: height ? parseFloat(height) : undefined
-            }]
+            }],
+            declaredValue: declaredValue ? parseFloat(declaredValue) : undefined,
+            phoneNumber: phoneNumber || undefined
           });
           break;
         }
@@ -90,7 +152,7 @@ export default async function postCalculate(request: Request, response: Response
           result = await ruspostService.calculateDelivery({
             fromPostalCode: senderPostalCode,
             toPostalCode: point.postal_code,
-            weight: parseFloat(weight) * 1000, // в граммы
+            weight: weightNum * 1000, // в граммы
             mailType: 2, // посылка
             declaredValue: declaredValue ? parseFloat(declaredValue) : undefined
           });
@@ -99,9 +161,12 @@ export default async function postCalculate(request: Request, response: Response
 
         case 'boxberry': {
           const boxberryService = new BoxberryService();
+          if (!point.city) {
+            throw new Error('City required for Boxberry calculation');
+          }
           result = await boxberryService.calculateDelivery({
             toCity: point.city,
-            weight: parseFloat(weight),
+            weight: weightNum,
             declaredValue: declaredValue ? parseFloat(declaredValue) : undefined
           });
           break;
@@ -148,5 +213,3 @@ export default async function postCalculate(request: Request, response: Response
     response.statusCode = 500;
   }
 }
-
-

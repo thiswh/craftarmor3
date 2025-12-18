@@ -1,0 +1,390 @@
+{
+  "info": {
+    "name": "CraftArmor Shipping API",
+    "description": "API для работы с пунктами выдачи и расчетом доставки (CDEK, Почта России, Boxberry)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "craftarmor-shipping-api",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "1. Получить пункты выдачи",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{api_url}}/delivery/points?bounds=55.5,37.5,56.0,38.0&services=cdek",
+          "host": ["{{api_url}}"],
+          "path": ["delivery", "points"],
+          "query": [
+            {
+              "key": "bounds",
+              "value": "55.5,37.5,56.0,38.0",
+              "description": "Границы карты: minLat,minLng,maxLat,maxLng (обязательный)"
+            },
+            {
+              "key": "services",
+              "value": "cdek",
+              "description": "Фильтр по службам: cdek,russianpost,boxberry (опционально)",
+              "disabled": false
+            }
+          ]
+        },
+        "description": "Получение списка пунктов выдачи по границам карты"
+      },
+      "response": []
+    },
+    {
+      "name": "1.1. Получить пункты (Москва, все службы)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{api_url}}/delivery/points?bounds=55.5,37.5,56.0,38.0",
+          "host": ["{{api_url}}"],
+          "path": ["delivery", "points"],
+          "query": [
+            {
+              "key": "bounds",
+              "value": "55.5,37.5,56.0,38.0"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "1.2. Получить пункты (Санкт-Петербург)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{api_url}}/delivery/points?bounds=59.8,30.2,60.0,30.5",
+          "host": ["{{api_url}}"],
+          "path": ["delivery", "points"],
+          "query": [
+            {
+              "key": "bounds",
+              "value": "59.8,30.2,60.0,30.5"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "2. Получить детали пункта",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{api_url}}/delivery/points/1",
+          "host": ["{{api_url}}"],
+          "path": ["delivery", "points", "1"]
+        },
+        "description": "Получение детальной информации о пункте выдачи по ID"
+      },
+      "response": []
+    },
+    {
+      "name": "3. Расчет стоимости доставки",
+      "item": [
+        {
+          "name": "3.1. CDEK - минимальный запрос",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pointId\": 1,\n  \"serviceCode\": \"cdek\",\n  \"weight\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/calculate",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "calculate"]
+            },
+            "description": "Расчет для CDEK с минимальными параметрами (только вес)"
+          },
+          "response": []
+        },
+        {
+          "name": "3.2. CDEK - с размерами",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pointId\": 1,\n  \"serviceCode\": \"cdek\",\n  \"weight\": 2.5,\n  \"length\": 30,\n  \"width\": 20,\n  \"height\": 15\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/calculate",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "calculate"]
+            },
+            "description": "Расчет для CDEK с указанием размеров посылки"
+          },
+          "response": []
+        },
+        {
+          "name": "3.3. CDEK - полный запрос",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pointId\": 1,\n  \"serviceCode\": \"cdek\",\n  \"weight\": 2.5,\n  \"length\": 30,\n  \"width\": 20,\n  \"height\": 15,\n  \"declaredValue\": 5000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/calculate",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "calculate"]
+            },
+            "description": "Расчет для CDEK со всеми параметрами включая объявленную стоимость"
+          },
+          "response": []
+        },
+        {
+          "name": "3.4. CDEK - легкая посылка (0.5 кг)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pointId\": 1,\n  \"serviceCode\": \"cdek\",\n  \"weight\": 0.5,\n  \"length\": 20,\n  \"width\": 15,\n  \"height\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/calculate",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "calculate"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3.5. CDEK - тяжелая посылка (10 кг)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pointId\": 1,\n  \"serviceCode\": \"cdek\",\n  \"weight\": 10,\n  \"length\": 50,\n  \"width\": 40,\n  \"height\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/calculate",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "calculate"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3.6. Почта России",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pointId\": 100,\n  \"serviceCode\": \"russianpost\",\n  \"weight\": 1.5,\n  \"length\": 25,\n  \"width\": 15,\n  \"height\": 10,\n  \"declaredValue\": 3000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/calculate",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "calculate"]
+            },
+            "description": "Расчет для Почты России (требует postal_code у пункта)"
+          },
+          "response": []
+        },
+        {
+          "name": "3.7. Boxberry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pointId\": 200,\n  \"serviceCode\": \"boxberry\",\n  \"weight\": 3.0,\n  \"declaredValue\": 7000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/calculate",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "calculate"]
+            },
+            "description": "Расчет для Boxberry (требует city у пункта)"
+          },
+          "response": []
+        }
+      ],
+      "description": "Различные варианты расчета стоимости доставки"
+    },
+    {
+      "name": "4. Синхронизация пунктов",
+      "item": [
+        {
+          "name": "4.1. Синхронизация всех служб",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/sync",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "sync"]
+            },
+            "description": "Синхронизация всех служб доставки (требует авторизации admin)"
+          },
+          "response": []
+        },
+        {
+          "name": "4.2. Синхронизация только CDEK",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"services\": [\"cdek\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/sync",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "sync"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4.3. Синхронизация CDEK и Почты России",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"services\": [\"cdek\", \"russianpost\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/delivery/sync",
+              "host": ["{{api_url}}"],
+              "path": ["delivery", "sync"]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Синхронизация пунктов выдачи из внешних API"
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "api_url",
+      "value": "{{base_url}}/api",
+      "type": "string"
+    }
+  ]
+}

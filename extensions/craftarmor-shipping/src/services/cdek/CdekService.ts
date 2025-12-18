@@ -117,9 +117,11 @@ export class CdekService {
    */
   async calculateDelivery(params: {
     fromLocation: { postalCode: string };
-    toLocation: { postalCode?: string; city?: string; address?: string };
+    toLocation: { postalCode?: string; city?: string; address?: string; region?: string };
     packages: Array<{ weight: number; length?: number; width?: number; height?: number }>;
     tariffCode?: number;
+    declaredValue?: number; // Объявленная стоимость заказа (рубли)
+    phoneNumber?: string; // Номер телефона для SMS уведомления
   }): Promise<{
     cost: number;
     currency: string;
@@ -128,25 +130,87 @@ export class CdekService {
   }> {
     const token = await this.getAccessToken();
 
-    const requestBody = {
+    // Формируем to_location: согласно документации CDEK, при использовании postal_code
+    // рекомендуется также указывать country_code, region и city для точной идентификации
+    const toLocation: any = {
+      country_code: 'RU', // Всегда указываем код страны
+    };
+    
+    if (params.toLocation.postalCode) {
+      toLocation.postal_code = params.toLocation.postalCode;
+    }
+    
+    if (params.toLocation.city) {
+      toLocation.city = params.toLocation.city;
+    }
+    
+    if (params.toLocation.region) {
+      toLocation.region = params.toLocation.region;
+    }
+    
+    if (params.toLocation.address) {
+      toLocation.address = params.toLocation.address;
+    }
+    
+    // Проверяем, что есть хотя бы postal_code или city
+    if (!toLocation.postal_code && !toLocation.city) {
+      throw new Error('CDEK: Either postal_code or city must be provided for to_location');
+    }
+
+    // Формируем тело запроса согласно документации CDEK API
+    const requestBody: any = {
+      type: 1, // Тип расчета: 1 - доставка
+      currency: 1, // Валюта: 1 - RUB
+      lang: 'rus', // Язык ответа
       from_location: {
         postal_code: params.fromLocation.postalCode,
+        country_code: 'RU', // Добавляем код страны для точности
       },
-      to_location: {
-        postal_code: params.toLocation.postalCode,
-        city: params.toLocation.city,
-        address: params.toLocation.address,
-      },
+      to_location: toLocation,
       packages: params.packages.map(pkg => ({
-        weight: pkg.weight * 1000, // CDEK требует вес в граммах
-        length: pkg.length || 10,
-        width: pkg.width || 10,
-        height: pkg.height || 10,
+        weight: Math.round(pkg.weight * 1000), // CDEK требует вес в граммах (целое число)
+        length: Math.round(pkg.length || 10), // Размеры в см (целые числа)
+        width: Math.round(pkg.width || 10),
+        height: Math.round(pkg.height || 10),
       })),
-      tariff_code: params.tariffCode || 136, // По умолчанию "Посылка склад-склад"
     };
 
-    const response = await fetch(`${this.apiUrl}/v2/calculator/tarifflist`, {
+    // Добавляем tariff_code только если указан (опциональный параметр)
+    if (params.tariffCode) {
+      requestBody.tariff_code = params.tariffCode;
+    }
+
+    // Формируем массив дополнительных услуг
+    const services: Array<{ code: string; parameter: string }> = [];
+    
+    // Добавляем объявленную стоимость (страхование) если указана
+    if (params.declaredValue !== undefined && params.declaredValue > 0) {
+      services.push({
+        code: 'INSURANCE',
+        parameter: Math.round(params.declaredValue).toString() // Объявленная стоимость в рублях (строка)
+      });
+    }
+    
+    // Добавляем SMS уведомление если указан номер телефона
+    if (params.phoneNumber) {
+      services.push({
+        code: 'SMS',
+        parameter: params.phoneNumber // Номер телефона для SMS (строка)
+      });
+    }
+    
+    // Определяем эндпоинт: если есть услуги, используем tariffAndService, иначе tarifflist
+    const hasServices = services.length > 0;
+    const endpoint = hasServices 
+      ? '/v2/calculator/tariffAndService' 
+      : '/v2/calculator/tarifflist';
+    
+    // Добавляем services только если есть хотя бы одна услуга
+    if (hasServices) {
+      requestBody.services = services;
+    }
+
+    const response = await fetch(`${this.apiUrl}${endpoint}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -156,23 +220,146 @@ export class CdekService {
     });
 
     if (!response.ok) {
-      throw new Error(`CDEK calculation error: ${response.statusText}`);
+      const errorText = await response.text().catch(() => response.statusText || 'Unknown error');
+      console.error('[CdekService] CDEK API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText,
+        requestBody: JSON.stringify(requestBody),
+      });
+      throw new Error(`CDEK calculation error: ${response.status} ${errorText}`);
     }
 
     const data = await response.json();
     
-    if (!data || data.length === 0) {
+    // Проверяем структуру ответа
+    if (!data) {
+      throw new Error('CDEK: Empty response from API');
+    }
+
+    // Для tariffAndService ответ имеет структуру: { tariff_codes: [{ tariff_code, status, result: {...} }, ...] }
+    // Для tarifflist ответ имеет структуру: { tariff_codes: [{ tariff_code, tariff_name, delivery_mode, ... }, ...] } или массив
+    
+    let tariffs: any[] = [];
+    if (Array.isArray(data)) {
+      // Ответ - массив тарифов
+      tariffs = data;
+    } else if (data.tariff_codes && Array.isArray(data.tariff_codes)) {
+      // CDEK API v2 возвращает объект с полем tariff_codes
+      // Для tariffAndService каждый элемент имеет структуру { tariff_code, status, result: {...} }
+      // Для tarifflist каждый элемент имеет структуру { tariff_code, tariff_name, delivery_mode, ... }
+      
+      if (hasServices) {
+        // Для tariffAndService извлекаем result из каждого элемента
+        tariffs = data.tariff_codes
+          .filter((item: any) => item.result) // Фильтруем только элементы с result
+          .map((item: any) => ({
+            ...item.result, // Распаковываем result
+            tariff_code: item.tariff_code, // Сохраняем tariff_code для идентификации
+            status: item.status
+          }));
+      } else {
+        // Для tarifflist используем элементы как есть
+        tariffs = data.tariff_codes;
+      }
+    } else if (data.tariffs && Array.isArray(data.tariffs)) {
+      tariffs = data.tariffs;
+    } else if (data.tariff) {
+      // Если один тариф в объекте
+      tariffs = [data.tariff];
+    } else {
+      console.error('[CdekService] Unexpected response structure:', JSON.stringify(data));
+      throw new Error('CDEK: Unexpected response structure');
+    }
+    
+    if (tariffs.length === 0) {
       throw new Error('CDEK: No tariffs available');
     }
 
-    // Берем первый доступный тариф
-    const tariff = data[0];
+    // Выбираем тариф из списка
+    let tariff: any;
+    
+    if (hasServices) {
+      // Для tariffAndService выбираем самый дешевый тариф (по total_sum, который уже включает услуги)
+      const sortedTariffs = tariffs.sort((a: any, b: any) => {
+        const costA = a.total_sum ?? a.delivery_sum ?? 0;
+        const costB = b.total_sum ?? b.delivery_sum ?? 0;
+        return costA - costB;
+      });
+      tariff = sortedTariffs[0];
+    } else {
+      // Для tarifflist выбираем тариф для ПВЗ (пункта выдачи)
+      // delivery_mode значения для ПВЗ (отправка со склада):
+      //   4 = склад-склад (основной вариант - склад отправителя → склад/ПВЗ получателя)
+      //   7 = склад-постамат (альтернатива - склад отправителя → постамат/ПВЗ получателя)
+      //
+      // Типы тарифов (по приоритету от дешевого к дорогому):
+      //   1. "Посылка" - обычная посылка (самый дешевый, ~345 руб для Москвы)
+      //   2. "Экспресс" - экспресс доставка (средняя скорость, ~740 руб)
+      //   3. "Супер-экспресс" - быстрая доставка (дороже, от 1660 руб)
+      //   Примечание: "Магистральный экспресс" исключен (для больших грузов)
+      const pvzDeliveryModes = [4, 7]; // Режимы для отправки со склада к ПВЗ
+      
+      // Фильтруем тарифы, подходящие для ПВЗ
+      // Исключаем магистральный экспресс (для больших грузов)
+      const pvzTariffs = tariffs.filter((t: any) => {
+        const isPvzMode = pvzDeliveryModes.includes(t.delivery_mode);
+        const isMagistral = (t.tariff_name || '').toLowerCase().includes('магистральный');
+        return isPvzMode && !isMagistral;
+      });
+      
+      if (pvzTariffs.length > 0) {
+        // Группируем тарифы по типам для лучшего выбора
+        // Приоритет: Посылка > Экспресс > Супер-экспресс
+        // Магистральный исключен (для больших грузов)
+        const tariffPriority = (tariffName: string): number => {
+          const name = tariffName.toLowerCase();
+          if (name.includes('посылка')) return 1; // Самый приоритетный (дешевый)
+          if (name.includes('экспресс') && !name.includes('супер')) return 2;
+          if (name.includes('супер-экспресс')) return 3;
+          return 4; // Остальные
+        };
+        
+        // Сортируем: сначала по приоритету типа тарифа, затем по цене
+        const sortedTariffs = pvzTariffs.sort((a: any, b: any) => {
+          const priorityA = tariffPriority(a.tariff_name || '');
+          const priorityB = tariffPriority(b.tariff_name || '');
+          
+          if (priorityA !== priorityB) {
+            return priorityA - priorityB; // Сначала по типу (приоритету)
+          }
+          
+          // Если одинаковый тип, сортируем по цене
+          const costA = a.delivery_sum || a.total_sum || 0;
+          const costB = b.delivery_sum || b.total_sum || 0;
+          return costA - costB;
+        });
+        
+        // Выбираем первый (самый дешевый из приоритетных)
+        tariff = sortedTariffs[0];
+      } else {
+        // Если нет подходящих тарифов для ПВЗ, берем первый доступный
+        tariff = tariffs[0];
+      }
+    }
+    
+    // Проверяем наличие обязательных полей
+    // Для tariffAndService используем total_sum (уже включает услуги), для tarifflist - delivery_sum или total_sum
+    const totalSum = hasServices ? (tariff.total_sum ?? tariff.delivery_sum) : (tariff.delivery_sum ?? tariff.total_sum);
+    
+    if (totalSum === undefined || totalSum === null) {
+      console.error('[CdekService] Tariff response missing cost field:', JSON.stringify(tariff));
+      throw new Error('CDEK: Tariff response missing cost field');
+    }
+
+    // CDEK API v2: delivery_sum и total_sum возвращаются в рублях
+    const cost = parseFloat(totalSum);
     
     return {
-      cost: parseFloat(tariff.total_sum) / 100, // CDEK возвращает в копейках
-      currency: 'RUB',
-      deliveryTimeMin: tariff.period_min || 0,
-      deliveryTimeMax: tariff.period_max || 0,
+      cost: cost,
+      currency: tariff.currency || 'RUB',
+      deliveryTimeMin: tariff.period_min || tariff.delivery_time_min || 0,
+      deliveryTimeMax: tariff.period_max || tariff.delivery_time_max || 0,
     };
   }
 }
