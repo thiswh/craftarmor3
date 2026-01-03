@@ -14,7 +14,7 @@ export default async function syncDeliveryPoints() {
   // Синхронизация CDEK
   try {
     console.log('[syncDeliveryPoints] Syncing CDEK points...');
-    const cdekService = new CdekService();
+    const cdekService = CdekService.getInstance();
     const cdekPoints = await cdekService.getDeliveryPoints();
     await repository.syncPoints('cdek', cdekPoints);
     console.log(`[syncDeliveryPoints] CDEK: ${cdekPoints.length} points synced`);

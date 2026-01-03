@@ -47,7 +47,7 @@ export default async function postSync(request: Request, response: Response) {
     if (servicesToSync.includes('cdek')) {
       try {
         console.log('[postSync] Starting CDEK synchronization...');
-        const cdekService = new CdekService();
+        const cdekService = CdekService.getInstance();
         const cdekPoints = await cdekService.getDeliveryPoints();
         await repository.syncPoints('cdek', cdekPoints);
         results.services.cdek = {

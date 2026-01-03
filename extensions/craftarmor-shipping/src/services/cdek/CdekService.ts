@@ -1,16 +1,19 @@
 /**
  * Сервис для работы с API CDEK
+ * Реализован как синглтон для переиспользования OAuth токена между запросами
  */
 import { DeliveryPoint } from '../DeliveryPointRepository.js';
 
 export class CdekService {
+  private static instance: CdekService | null = null;
   private clientId: string;
   private clientSecret: string;
   private accessToken?: string;
   private tokenExpiresAt?: Date;
   private readonly apiUrl: string;
+  private tokenPromise: Promise<string> | null = null; // Для предотвращения одновременных запросов токена
 
-  constructor() {
+  private constructor() {
     this.apiUrl = process.env.CDEK_API_URL || 'https://api.cdek.ru';
     this.clientId = process.env.CDEK_CLIENT_ID || '';
     this.clientSecret = process.env.CDEK_CLIENT_SECRET || '';
@@ -21,7 +24,18 @@ export class CdekService {
   }
 
   /**
+   * Получение единственного экземпляра сервиса (singleton)
+   */
+  public static getInstance(): CdekService {
+    if (!CdekService.instance) {
+      CdekService.instance = new CdekService();
+    }
+    return CdekService.instance;
+  }
+
+  /**
    * Получение OAuth2 токена
+   * Использует Promise для предотвращения одновременных запросов токена
    */
   private async getAccessToken(): Promise<string> {
     // Если токен еще действителен, возвращаем его
@@ -29,35 +43,49 @@ export class CdekService {
       return this.accessToken;
     }
 
-    // Получаем новый токен
-    const response = await fetch(`${this.apiUrl}/v2/oauth/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`CDEK OAuth failed: ${response.statusText}`);
+    // Если уже идет запрос токена, ждем его завершения
+    if (this.tokenPromise) {
+      return this.tokenPromise;
     }
 
-    const data = await response.json();
-    
-    if (!data.access_token) {
-      throw new Error('CDEK OAuth failed: access_token not received');
-    }
-    
-    const accessToken = data.access_token;
-    this.accessToken = accessToken;
-    // Токен обычно действителен 1 час, устанавливаем на 50 минут для безопасности
-    this.tokenExpiresAt = new Date(Date.now() + (data.expires_in - 600) * 1000);
+    // Создаем новый запрос токена
+    this.tokenPromise = (async () => {
+      try {
+        const response = await fetch(`${this.apiUrl}/v2/oauth/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: this.clientId,
+            client_secret: this.clientSecret,
+          }),
+        });
 
-    return accessToken;
+        if (!response.ok) {
+          throw new Error(`CDEK OAuth failed: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        if (!data.access_token) {
+          throw new Error('CDEK OAuth failed: access_token not received');
+        }
+        
+        const accessToken = data.access_token;
+        this.accessToken = accessToken;
+        // Токен обычно действителен 1 час, устанавливаем на 50 минут для безопасности
+        this.tokenExpiresAt = new Date(Date.now() + (data.expires_in - 600) * 1000);
+
+        return accessToken;
+      } finally {
+        // Очищаем promise после завершения
+        this.tokenPromise = null;
+      }
+    })();
+
+    return this.tokenPromise;
   }
 
   /**
@@ -210,14 +238,29 @@ export class CdekService {
       requestBody.services = services;
     }
 
-    const response = await fetch(`${this.apiUrl}${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
+    // Функция для выполнения запроса с retry логикой для временных ошибок
+    const makeRequest = async (attempt: number = 1): Promise<Response> => {
+      const response = await fetch(`${this.apiUrl}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      // Если получили временную ошибку (502, 503, 504) и еще есть попытки, повторяем
+      if (!response.ok && (response.status === 502 || response.status === 503 || response.status === 504) && attempt < 3) {
+        const delay = attempt * 500; // Экспоненциальная задержка: 500ms, 1000ms
+        console.warn(`[CdekService] Temporary error ${response.status}, retrying in ${delay}ms (attempt ${attempt}/2)...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return makeRequest(attempt + 1);
+      }
+
+      return response;
+    };
+
+    const response = await makeRequest();
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => response.statusText || 'Unknown error');

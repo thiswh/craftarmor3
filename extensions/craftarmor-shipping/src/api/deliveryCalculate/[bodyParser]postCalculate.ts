@@ -115,7 +115,7 @@ export default async function postCalculate(request: Request, response: Response
     try {
       switch (serviceCode) {
         case 'cdek': {
-          const cdekService = new CdekService();
+          const cdekService = CdekService.getInstance();
           
           // Для CDEK требуется либо postal_code, либо city для to_location
           if (!point.postal_code && !point.city) {
