@@ -117,6 +117,8 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
   };
   // Кеш всех загруженных точек (по ID для быстрого доступа)
   const [pointsCache, setPointsCache] = useState<Map<number, DeliveryPoint>>(new Map());
+  // Ref для хранения актуального значения pointsCache (чтобы избежать циклических зависимостей)
+  const pointsCacheRef = useRef<Map<number, DeliveryPoint>>(new Map());
   // Текущие границы карты для фильтрации точек при рендере
   const [currentBounds, setCurrentBounds] = useState<{ minLat: number; minLng: number; maxLat: number; maxLng: number } | null>(null);
   // Текущий zoom для кластеризации
@@ -128,9 +130,11 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
   const [loading, setLoading] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isMapActive, setIsMapActive] = useState(false); // Карта активна только после нажатия кнопки
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   const mapRef = useRef<MapRef>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   // Supercluster инстанс для кластеризации
   const superclusterRef = useRef(
     new Supercluster({
@@ -183,9 +187,15 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
     };
   }, []);
 
-  // Загрузка точек по границам карты (объединение с кешем)
+  // Загрузка точек по границам карты (с оптимизацией через excludeIds)
+  // ВАЖНО: не включаем pointsCache в зависимости, используем ref для актуального значения
   const loadPoints = useCallback(async () => {
     if (!mapRef.current) return;
+
+    // Отменяем предыдущий запрос, если он еще выполняется
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
 
     const bounds = mapRef.current.getBounds();
     const minLat = bounds.getSouth();
@@ -195,12 +205,29 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
 
     const boundsParam = `${minLat},${minLng},${maxLat},${maxLng}`;
 
+    // Создаем новый AbortController для этого запроса
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       if (!isMountedRef.current) return;
       setLoading(true);
       setError(null);
 
-      const response = await fetch(`/api/delivery/points?bounds=${boundsParam}&services=cdek`);
+      // Получаем список ID уже загруженных точек для исключения из ref (актуальное значение)
+      const cachedPointIds = Array.from(pointsCacheRef.current.keys());
+
+      // Всегда используем POST запрос (нет ограничений на размер данных)
+      const response = await fetch('/api/delivery/points', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
+        body: JSON.stringify({
+          bounds: boundsParam,
+          services: 'cdek',
+          excludeIds: cachedPointIds.length > 0 ? cachedPointIds : undefined
+        })
+      });
       
       if (!response.ok) {
         throw new Error('Failed to load delivery points');
@@ -211,24 +238,27 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
       if (!isMountedRef.current) return;
       if (data.success && data.data && Array.isArray(data.data.points)) {
         const newPoints = data.data.points as DeliveryPoint[];
-        console.log('[DeliveryMapPicker] Loaded points:', newPoints.length);
         
-        // Объединяем новые точки с кешем (добавляем только новые)
+        // Добавляем новые точки в кеш (бэкенд уже отфильтровал, все точки новые)
         setPointsCache(prev => {
           const updated = new Map(prev);
           newPoints.forEach(point => {
             updated.set(point.id, point);
           });
-          console.log('[DeliveryMapPicker] Cache size:', updated.size);
+          // Синхронизируем ref с актуальным значением
+          pointsCacheRef.current = updated;
           return updated;
         });
         
         // Обновляем текущие границы для фильтрации
         setCurrentBounds({ minLat, minLng, maxLat, maxLng });
-      } else {
-        console.warn('[DeliveryMapPicker] Invalid response format:', data);
       }
     } catch (err: any) {
+      // Игнорируем ошибку отмены запроса
+      if (err.name === 'AbortError') {
+        return;
+      }
+      
       if (!isMountedRef.current) return;
       console.error('[DeliveryMapPicker] Error loading points:', err);
       setError(err.message || 'Ошибка загрузки пунктов выдачи');
@@ -236,12 +266,16 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
       if (isMountedRef.current) {
         setLoading(false);
       }
+      // Очищаем ref, если это был последний запрос
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
     }
-  }, []);
+  }, []); // Пустые зависимости - функция стабильна, используем ref для актуального кеша
 
-  // Debounced загрузка точек при изменении карты
+  // Debounced загрузка точек при изменении карты (только если карта активна)
   const handleMoveEnd = useCallback(() => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || !isMapActive) return;
     
     const bounds = mapRef.current.getBounds();
     
@@ -260,7 +294,7 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
     debounceTimerRef.current = setTimeout(() => {
       loadPoints();
     }, 500); // Debounce 500ms
-  }, [loadPoints]);
+  }, [loadPoints, isMapActive]);
 
   // Загрузка детальной информации о точке и расчет стоимости (мемоизирован)
   const loadPointDetailAndCalculate = useCallback(async (pointId: number, point: DeliveryPoint) => {
@@ -292,6 +326,7 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
       const pointDetail: DeliveryPointDetail = pointData.data.point;
 
       // Рассчитываем стоимость доставки
+      // Передаем данные точки для оптимизации (избегаем повторного запроса к БД)
       const totalWeight = 0.15; // TODO: Получать вес из CheckoutContext
       const calcResponse = await fetch('/api/delivery/calculate', {
         method: 'POST',
@@ -301,6 +336,13 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
         body: JSON.stringify({
           pointId: pointId,
           serviceCode: pointDetail.service_code,
+          pointData: {  // Передаем данные точки для оптимизации
+            postal_code: pointDetail.postal_code,
+            city: pointDetail.city,
+            address: pointDetail.address,
+            region: pointDetail.region,
+            service_code: pointDetail.service_code
+          },
           weight: totalWeight,
           length: 18,
           width: 20,
@@ -330,6 +372,13 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
           body: JSON.stringify({
             pointId: pointId,
             serviceCode: pointDetail.service_code,
+            pointData: {  // Передаем данные точки для оптимизации
+              postal_code: pointDetail.postal_code,
+              city: pointDetail.city,
+              address: pointDetail.address,
+              region: pointDetail.region,
+              service_code: pointDetail.service_code
+            },
             weight: totalWeight,
             length: 18,
             width: 20,
@@ -423,19 +472,24 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
+      // Отменяем активный запрос при размонтировании
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
     };
   }, []);
 
-  // Загрузка точек при монтировании компонента
+  // Загрузка точек только после активации карты
   useEffect(() => {
-    if (isClient && mapRef.current) {
+    if (isClient && mapRef.current && isMapActive) {
       // Небольшая задержка для инициализации карты
       const timer = setTimeout(() => {
         loadPoints();
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isClient, loadPoints]);
+  }, [isClient, isMapActive, loadPoints]); // Загружаем только когда карта активирована
 
   // ВСЕ ХУКИ должны быть ДО любого условного возврата!
   const selectedPointData = openedPointId ? pointDetails.get(openedPointId) : null;
@@ -583,6 +637,51 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
         >
           {markers}
         </MapComponent>
+
+        {/* Кнопка активации карты - показывается только когда карта не активна */}
+        {!isMapActive && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0, 0, 0, 0.3)',
+            zIndex: 100,
+            pointerEvents: 'none'
+          }}>
+            <button
+              onClick={() => setIsMapActive(true)}
+              style={{
+                pointerEvents: 'auto',
+                padding: '16px 32px',
+                background: '#fff',
+                color: '#1a1a1a',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                transition: 'all 0.2s',
+                minWidth: '200px'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#f0f0f0';
+                e.currentTarget.style.transform = 'scale(1.02)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#fff';
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+            >
+              Выбрать пункт выдачи
+            </button>
+          </div>
+        )}
 
         {/* Боковая панель с информацией о выбранной точке */}
         {openedPointId && selectedPointData && (

@@ -25,7 +25,8 @@ export default async function postCalculate(request: Request, response: Response
       width,
       height,
       declaredValue,
-      phoneNumber
+      phoneNumber,
+      pointData  // Опциональные данные точки для оптимизации (избегаем повторного запроса к БД)
     } = body;
 
     // Валидация обязательных параметров
@@ -85,16 +86,61 @@ export default async function postCalculate(request: Request, response: Response
     }
 
     // Получаем информацию о пункте выдачи
-    const repository = new DeliveryPointRepository(pool);
-    const point = await repository.getPointById(pointId);
+    // Если данные точки переданы в запросе - используем их (оптимизация)
+    // Если нет - загружаем из БД (fallback для обратной совместимости)
+    let point: any;
 
-    if (!point) {
-      response.$body = {
-        success: false,
-        message: 'Delivery point not found'
+    if (pointData) {
+      // Используем переданные данные точки (БЕЗ запроса к БД)
+      point = {
+        id: pointId,
+        postal_code: pointData.postal_code || pointData.postalCode,
+        city: pointData.city,
+        address: pointData.address,
+        region: pointData.region,
+        service_code: pointData.service_code || pointData.serviceCode || serviceCode
       };
-      response.statusCode = 404;
-      return;
+
+      // Валидация обязательных полей для расчета
+      if (serviceCode === 'cdek' && !point.postal_code && !point.city) {
+        response.$body = {
+          success: false,
+          message: 'CDEK calculation requires either postal_code or city in pointData'
+        };
+        response.statusCode = 400;
+        return;
+      }
+
+      if (serviceCode === 'russianpost' && !point.postal_code) {
+        response.$body = {
+          success: false,
+          message: 'Postal code required in pointData for Russian Post calculation'
+        };
+        response.statusCode = 400;
+        return;
+      }
+
+      if (serviceCode === 'boxberry' && !point.city) {
+        response.$body = {
+          success: false,
+          message: 'City required in pointData for Boxberry calculation'
+        };
+        response.statusCode = 400;
+        return;
+      }
+    } else {
+      // Fallback: загружаем из БД (для обратной совместимости)
+      const repository = new DeliveryPointRepository(pool);
+      point = await repository.getPointById(pointId);
+
+      if (!point) {
+        response.$body = {
+          success: false,
+          message: 'Delivery point not found'
+        };
+        response.statusCode = 404;
+        return;
+      }
     }
 
     // Получаем настройки отправителя из конфига или переменных окружения

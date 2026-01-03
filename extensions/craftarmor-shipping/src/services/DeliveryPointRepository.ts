@@ -200,7 +200,8 @@ export class DeliveryPointRepository {
     minLng: number,
     maxLat: number,
     maxLng: number,
-    serviceCodes?: string[]
+    serviceCodes?: string[],
+    excludeIds?: number[]  // Опциональный список ID для исключения (оптимизация трафика)
   ): Promise<any[]> {
     // Используем PostGIS для быстрого геопространственного поиска
     // ST_MakeEnvelope(xmin, ymin, xmax, ymax, srid) где x=longitude, y=latitude
@@ -221,16 +222,28 @@ export class DeliveryPointRepository {
     `;
 
     const params: any[] = [minLat, minLng, maxLat, maxLng];
+    let paramIndex = 5;
 
     if (serviceCodes && serviceCodes.length > 0) {
-      query += ` AND ds.code = ANY($5::text[])`;
+      query += ` AND ds.code = ANY($${paramIndex}::text[])`;
       params.push(serviceCodes);
+      paramIndex++;
+    }
+
+    // Добавляем фильтр по excludeIds, если передан
+    if (excludeIds && excludeIds.length > 0) {
+      // Используем NOT (id = ANY(...)) вместо != ALL() для более надежной работы
+      // Это эквивалентно, но работает стабильнее с большими массивами
+      query += ` AND NOT (dp.id = ANY($${paramIndex}::int[]))`;
+      params.push(excludeIds);
+      paramIndex++;
     }
 
     // Сортируем для консистентности результатов
     query += ` ORDER BY dp.city, dp.address`;
 
     const result = await this.pool.query(query, params);
+    
     return result.rows;
   }
 
