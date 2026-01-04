@@ -4,7 +4,7 @@
     "language": "ru",
     "timezone": "UTC",
     "currency": "RUB",
-    "weightUnit": "kg",
+    "weightUnit": "g",
     "homeUrl": "http://localhost:3000"
   },
   "system": {

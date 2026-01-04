@@ -3,6 +3,7 @@
  * Выполняется при запуске приложения EverShop
  */
 import { registerJob } from '@evershop/evershop/lib/cronjob';
+import { addProcessor } from '@evershop/evershop/lib/util/registry';
 import * as path from 'path';
 import * as url from 'url';
 import * as fs from 'fs';
@@ -32,6 +33,18 @@ export default async function bootstrap() {
   });
 
   console.log('[craftarmor-shipping] Cron job registered: syncDeliveryPoints (daily at 03:00)');
+
+  // Регистрируем процессор для добавления полей размеров в cart item
+  const processorPath = path.resolve(__dirname, 'services', 'registerCartItemDimensions.js');
+  if (fs.existsSync(processorPath)) {
+    // Преобразуем путь в file:// URL для Windows совместимости с ESM
+    const processorUrl = url.pathToFileURL(processorPath).href;
+    const registerCartItemDimensions = (await import(processorUrl)).default;
+    addProcessor('cartItemFields', registerCartItemDimensions, 10);
+    console.log('[craftarmor-shipping] Cart item dimensions processor registered');
+  } else {
+    console.warn(`[craftarmor-shipping] Processor file not found: ${processorPath}. Make sure to compile the extension.`);
+  }
 }
 
 

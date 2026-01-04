@@ -1,0 +1,23 @@
+extend interface ShoppingCartItem {
+  productLength: Float
+  productWidth: Float
+  productHeight: Float
+}
+
+extend interface ShoppingCartItem {
+  productLength: Float
+  productWidth: Float
+  productHeight: Float
+}
+
+extend type CartItem {
+  productLength: Float
+  productWidth: Float
+  productHeight: Float
+}
+
+extend type OrderItem {
+  productLength: Float
+  productWidth: Float
+  productHeight: Float
+}

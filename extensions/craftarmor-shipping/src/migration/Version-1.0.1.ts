@@ -103,5 +103,5 @@ export default async function (connection: PoolClient) {
     ON CONFLICT (code) DO NOTHING
   `);
 
-  console.log('[craftarmor-shipping] Migration Version-1.0.0 completed successfully');
+  console.log('[craftarmor-shipping] Migration Version-1.0.1 completed successfully');
 }

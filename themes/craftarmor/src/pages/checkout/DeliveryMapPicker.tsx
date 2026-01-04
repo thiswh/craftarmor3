@@ -40,6 +40,10 @@ interface DeliveryCalculation {
 interface DeliveryMapPickerProps {
   onPointSelect?: (pointId: number, calculation: DeliveryCalculation, pointDetail: DeliveryPointDetail) => void;
   selectedPointId?: number;
+  cartWeight?: number; // вес корзины в кг
+  cartLength?: number; // длина в см
+  cartWidth?: number;  // ширина в см
+  cartHeight?: number; // высота в см
 }
 
 // Компонент маркера CDEK (мемоизирован для оптимизации)
@@ -103,7 +107,14 @@ const ClusterMarker = React.memo(({
   </div>
 ));
 
-export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: DeliveryMapPickerProps) {
+export default function DeliveryMapPicker({ 
+  onPointSelect, 
+  selectedPointId,
+  cartWeight = 0.15, // значение по умолчанию (кг)
+  cartLength = 18,    // значение по умолчанию (см)
+  cartWidth = 20,     // значение по умолчанию (см)
+  cartHeight = 5      // значение по умолчанию (см)
+}: DeliveryMapPickerProps) {
   const [isClient, setIsClient] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   // Используем initialViewState вместо управляемого viewState для оптимизации
@@ -326,8 +337,7 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
       const pointDetail: DeliveryPointDetail = pointData.data.point;
 
       // Рассчитываем стоимость доставки
-      // Передаем данные точки для оптимизации (избегаем повторного запроса к БД)
-      const totalWeight = 0.15; // TODO: Получать вес из CheckoutContext
+      // Используем параметры из корзины, переданные через props
       const calcResponse = await fetch('/api/delivery/calculate', {
         method: 'POST',
         headers: {
@@ -343,10 +353,10 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
             region: pointDetail.region,
             service_code: pointDetail.service_code
           },
-          weight: totalWeight,
-          length: 18,
-          width: 20,
-          height: 5,
+          weight: cartWeight,      // вес из корзины (кг)
+          length: cartLength,      // длина из корзины (см)
+          width: cartWidth,        // ширина из корзины (см)
+          height: cartHeight,      // высота из корзины (см)
         }),
       });
 
@@ -379,10 +389,10 @@ export default function DeliveryMapPicker({ onPointSelect, selectedPointId }: De
               region: pointDetail.region,
               service_code: pointDetail.service_code
             },
-            weight: totalWeight,
-            length: 18,
-            width: 20,
-            height: 5,
+            weight: cartWeight,      // вес из корзины (кг)
+            length: cartLength,      // длина из корзины (см)
+            width: cartWidth,         // ширина из корзины (см)
+            height: cartHeight,       // высота из корзины (см)
           }),
         });
 
