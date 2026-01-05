@@ -1,0 +1,17 @@
+extend interface ShoppingCart {
+  totalLength: Float
+  totalWidth: Float
+  totalHeight: Float
+}
+
+extend type Cart {
+  totalLength: Float
+  totalWidth: Float
+  totalHeight: Float
+}
+
+extend type Order {
+  totalLength: Float
+  totalWidth: Float
+  totalHeight: Float
+}

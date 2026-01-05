@@ -219,6 +219,9 @@ export const fragments = `
       value
       unit
     }
+    totalLength
+    totalWidth
+    totalHeight
     taxAmountBeforeDiscount {
       value
       text

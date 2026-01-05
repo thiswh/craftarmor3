@@ -7,6 +7,9 @@
  */
 import { Request, Response } from 'express';
 import { pool } from '@evershop/evershop/lib/postgres';
+// @ts-ignore - модуль доступен в runtime
+import { getConfig } from '@evershop/evershop/lib/util/getConfig';
+import { getMyCart } from '@evershop/evershop/checkout/services';
 import { DeliveryPointRepository } from '../../services/DeliveryPointRepository.js';
 import { CdekService } from '../../services/cdek/CdekService.js';
 import { RussianPostService } from '../../services/russianpost/RussianPostService.js';
@@ -30,25 +33,27 @@ export default async function postCalculate(request: Request, response: Response
     } = body;
 
     // Валидация обязательных параметров
-    if (!pointId || !serviceCode || !weight) {
+    if (!pointId || !serviceCode) {
       response.$body = {
         success: false,
-        message: 'Required parameters: pointId, serviceCode, weight'
+        message: 'Required parameters: pointId, serviceCode'
       };
       response.statusCode = 400;
       return;
     }
 
     // Валидация веса
-    const weightNum = parseFloat(weight);
-    if (isNaN(weightNum) || weightNum <= 0 || weightNum > 1000) {
-      response.$body = {
-        success: false,
-        message: 'Weight must be a positive number between 0 and 1000 kg'
-      };
-      response.statusCode = 400;
-      return;
-    }
+    const shopWeightUnit = String(getConfig('shop.weightUnit', 'kg')).toLowerCase();
+    const parseWeightToGrams = (value: unknown): number | undefined => {
+      const num = parseFloat(String(value));
+      if (!Number.isFinite(num) || num <= 0) {
+        return undefined;
+      }
+      return shopWeightUnit === 'g' ? num : num * 1000;
+    };
+
+    let weightGrams = weight !== undefined ? parseWeightToGrams(weight) : undefined;
+    let weightSource: 'body' | 'cart' = weightGrams !== undefined ? 'body' : 'cart';
 
     // Валидация размеров (если указаны)
     if (length !== undefined) {
@@ -156,6 +161,95 @@ export default async function postCalculate(request: Request, response: Response
       return;
     }
 
+    // Пытаемся получить размеры из корзины (приоритет)
+    let finalLength: number | undefined = length ? parseFloat(length) : undefined;
+    let finalWidth: number | undefined = width ? parseFloat(width) : undefined;
+    let finalHeight: number | undefined = height ? parseFloat(height) : undefined;
+    let dimensionsSource: 'body' | 'cart' = 'body';
+
+    try {
+      // Получаем имя cookie из конфига (аналогично getFrontStoreSessionCookieName)
+      const cookieName = getConfig('system.session.cookieName', 'sid');
+      const sessionID = request.signedCookies?.[cookieName];
+      
+      if (sessionID) {
+        // Получаем cart по sessionID
+        const cart = await getMyCart(sessionID, undefined);
+        if (cart) {
+          const cartLength = cart.getData('total_length');
+          const cartWidth = cart.getData('total_width');
+          const cartHeight = cart.getData('total_height');
+          const cartWeight = cart.getData('total_weight');
+          
+          console.log('[postCalculate] Cart found by sessionID, dimensions from cart:', {
+            total_length: cartLength,
+            total_width: cartWidth,
+            total_height: cartHeight,
+            total_weight: cartWeight
+          });
+          
+          // Используем данные из корзины, если они есть
+          if (cartLength !== null && cartLength !== undefined) {
+            finalLength = parseFloat(String(cartLength));
+            dimensionsSource = 'cart';
+          }
+          if (cartWidth !== null && cartWidth !== undefined) {
+            finalWidth = parseFloat(String(cartWidth));
+            dimensionsSource = 'cart';
+          }
+          if (cartHeight !== null && cartHeight !== undefined) {
+            finalHeight = parseFloat(String(cartHeight));
+            dimensionsSource = 'cart';
+          }
+          if (cartWeight !== null && cartWeight !== undefined) {
+            const cartWeightNum = parseFloat(String(cartWeight));
+            if (Number.isFinite(cartWeightNum) && cartWeightNum > 0) {
+              weightGrams = shopWeightUnit === 'g' ? cartWeightNum : cartWeightNum * 1000;
+              weightSource = 'cart';
+            }
+          }
+        } else {
+          console.log('[postCalculate] Cart not found for sessionID, using body parameters');
+        }
+      } else {
+        console.log('[postCalculate] No sessionID in cookies, using body parameters');
+      }
+    } catch (error) {
+      // Если не удалось получить корзину, используем параметры из body (fallback)
+      console.warn('[postCalculate] Failed to get cart from session, using body parameters:', error);
+    }
+
+    if (weightGrams === undefined || !Number.isFinite(weightGrams)) {
+      response.$body = {
+        success: false,
+        message: 'Weight is required (provide weight in body or ensure cart has total_weight)'
+      };
+      response.statusCode = 400;
+      return;
+    }
+
+    if (weightGrams <= 0 || weightGrams > 1000 * 1000) {
+      response.$body = {
+        success: false,
+        message: 'Weight must be a positive number between 0 and 1000 kg'
+      };
+      response.statusCode = 400;
+      return;
+    }
+
+    const weightKg = weightGrams / 1000;
+
+    console.log('[postCalculate] Dimensions source:', dimensionsSource, {
+      length: finalLength,
+      width: finalWidth,
+      height: finalHeight
+    });
+    console.log('[postCalculate] Weight source:', weightSource, {
+      weightGrams,
+      weightKg,
+      unit: shopWeightUnit
+    });
+
     let result;
 
     try {
@@ -179,10 +273,10 @@ export default async function postCalculate(request: Request, response: Response
               region: point.region || undefined
             },
             packages: [{
-              weight: weightNum,
-              length: length ? parseFloat(length) : undefined,
-              width: width ? parseFloat(width) : undefined,
-              height: height ? parseFloat(height) : undefined
+              weight: weightKg,
+              length: finalLength,
+              width: finalWidth,
+              height: finalHeight
             }],
             declaredValue: declaredValue ? parseFloat(declaredValue) : undefined,
             phoneNumber: phoneNumber || undefined
@@ -198,7 +292,7 @@ export default async function postCalculate(request: Request, response: Response
           result = await ruspostService.calculateDelivery({
             fromPostalCode: senderPostalCode,
             toPostalCode: point.postal_code,
-            weight: weightNum * 1000, // в граммы
+            weight: weightGrams, // в граммы
             mailType: 2, // посылка
             declaredValue: declaredValue ? parseFloat(declaredValue) : undefined
           });
@@ -212,7 +306,7 @@ export default async function postCalculate(request: Request, response: Response
           }
           result = await boxberryService.calculateDelivery({
             toCity: point.city,
-            weight: weightNum,
+            weight: weightKg,
             declaredValue: declaredValue ? parseFloat(declaredValue) : undefined
           });
           break;

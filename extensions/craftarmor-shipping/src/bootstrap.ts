@@ -45,6 +45,17 @@ export default async function bootstrap() {
   } else {
     console.warn(`[craftarmor-shipping] Processor file not found: ${processorPath}. Make sure to compile the extension.`);
   }
+
+  // Регистрируем процессор для добавления полей total_length/total_width/total_height в cart
+  const cartDimensionsProcessorPath = path.resolve(__dirname, 'services', 'registerCartDimensionsFields.js');
+  if (fs.existsSync(cartDimensionsProcessorPath)) {
+    const cartDimensionsProcessorUrl = url.pathToFileURL(cartDimensionsProcessorPath).href;
+    const registerCartDimensionsFields = (await import(cartDimensionsProcessorUrl)).default;
+    addProcessor('cartFields', registerCartDimensionsFields, 10);
+    console.log('[craftarmor-shipping] Cart dimensions fields processor registered');
+  } else {
+    console.warn(`[craftarmor-shipping] Cart dimensions processor file not found: ${cartDimensionsProcessorPath}. Make sure to compile the extension.`);
+  }
 }
 
 

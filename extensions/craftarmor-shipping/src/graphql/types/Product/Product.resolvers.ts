@@ -9,14 +9,20 @@ export default {
     length: async (product: any, _, context: any) => {
       try {
         // Если размеры уже есть в объекте product (из базового запроса), возвращаем их
+        const productId = product.productId || product.uuid;
         if (product.length !== undefined) {
+          console.log('[Product.resolvers] length from product object', {
+            productId,
+            length: product.length
+          });
           return product.length ? parseFloat(product.length) : null;
         }
+        console.log('[Product.resolvers] length from DB', { productId });
         
         // Иначе загружаем из БД
         const result = await pool.query(
           'SELECT length FROM product WHERE product_id = $1',
-          [product.productId || product.uuid]
+          [productId]
         );
         
         if (result.rows.length > 0 && result.rows[0].length) {
@@ -33,14 +39,20 @@ export default {
     width: async (product: any, _, context: any) => {
       try {
         // Если размеры уже есть в объекте product (из базового запроса), возвращаем их
+        const productId = product.productId || product.uuid;
         if (product.width !== undefined) {
+          console.log('[Product.resolvers] width from product object', {
+            productId,
+            width: product.width
+          });
           return product.width ? parseFloat(product.width) : null;
         }
+        console.log('[Product.resolvers] width from DB', { productId });
         
         // Иначе загружаем из БД
         const result = await pool.query(
           'SELECT width FROM product WHERE product_id = $1',
-          [product.productId || product.uuid]
+          [productId]
         );
         
         if (result.rows.length > 0 && result.rows[0].width) {
@@ -57,14 +69,20 @@ export default {
     height: async (product: any, _, context: any) => {
       try {
         // Если размеры уже есть в объекте product (из базового запроса), возвращаем их
+        const productId = product.productId || product.uuid;
         if (product.height !== undefined) {
+          console.log('[Product.resolvers] height from product object', {
+            productId,
+            height: product.height
+          });
           return product.height ? parseFloat(product.height) : null;
         }
+        console.log('[Product.resolvers] height from DB', { productId });
         
         // Иначе загружаем из БД
         const result = await pool.query(
           'SELECT height FROM product WHERE product_id = $1',
-          [product.productId || product.uuid]
+          [productId]
         );
         
         if (result.rows.length > 0 && result.rows[0].height) {

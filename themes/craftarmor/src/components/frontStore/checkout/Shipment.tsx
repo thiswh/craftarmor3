@@ -40,41 +40,24 @@ export function Shipment() {
     ? cart.totalWeight.value / 1000 // конвертируем граммы в кг
     : 0.15; // значение по умолчанию, если корзина пуста
   
-  // Вычисляем размеры корзины из cart.items
-  // Используем максимальные значения для каждого измерения
-  // (для нескольких товаров берем наибольшие размеры)
+  // Используем размеры из cart.totalLength/totalWidth/totalHeight (вычисляются на сервере)
+  // Если размеры не доступны, используем значения по умолчанию
   const cartDimensions = useMemo(() => {
-    if (!cart?.items || cart.items.length === 0) {
-      // Значения по умолчанию, если корзина пуста
+    if (cart?.totalLength && cart?.totalWidth && cart?.totalHeight) {
       return {
-        length: 18, // см
-        width: 20,  // см
-        height: 5   // см
+        length: cart.totalLength,
+        width: cart.totalWidth,
+        height: cart.totalHeight
       };
     }
 
-    // Находим максимальные значения размеров среди всех товаров в корзине
-    let maxLength = 0;
-    let maxWidth = 0;
-    let maxHeight = 0;
-
-    cart.items.forEach((item: any) => {
-      const length = item.productLength || 0;
-      const width = item.productWidth || 0;
-      const height = item.productHeight || 0;
-
-      if (length > maxLength) maxLength = length;
-      if (width > maxWidth) maxWidth = width;
-      if (height > maxHeight) maxHeight = height;
-    });
-
-    // Если размеры не найдены, используем значения по умолчанию
+    // Fallback: значения по умолчанию, если размеры не доступны
     return {
-      length: maxLength > 0 ? maxLength : 18,
-      width: maxWidth > 0 ? maxWidth : 20,
-      height: maxHeight > 0 ? maxHeight : 5
+      length: 18, // см
+      width: 20,  // см
+      height: 5   // см
     };
-  }, [cart?.items]);
+  }, [cart?.totalLength, cart?.totalWidth, cart?.totalHeight]);
 
   // Логирование для проверки структуры данных корзины
   useEffect(() => {
