@@ -60,6 +60,16 @@ const mapCustomerAddressToForm = (address: ExtendedCustomerAddress) => ({
   postcode: address.postcode || ''
 });
 
+const getPickupMetaFromAddress = (address: ExtendedCustomerAddress) => {
+  const raw = address as any;
+  return {
+    pickup_point_id: raw.pickupPointId ?? raw.pickup_point_id ?? null,
+    pickup_service_code: raw.pickupServiceCode ?? raw.pickup_service_code ?? null,
+    pickup_external_id: raw.pickupExternalId ?? raw.pickup_external_id ?? null,
+    pickup_data: raw.pickupData ?? raw.pickup_data ?? null
+  };
+};
+
 export function Shipment() {
   const [selectedPointId, setSelectedPointId] = useState<number | undefined>();
   const [deliveryType, setDeliveryType] = useState<DeliveryType>('pickup');
@@ -306,13 +316,19 @@ export function Shipment() {
     return lines.length > 0 ? lines : [_('No recipient selected yet')];
   }, [summaryAddress]);
 
-  const updateShipment = async (method: { code: string; name: string }) => {
+  const updateShipment = async (
+    method: { code: string; name: string },
+    extraAddressData?: Record<string, unknown>
+  ) => {
     try {
       const validate = await form.trigger('shippingAddress');
       if (!validate) {
         return false;
       }
-      const updatedShippingAddress = form.getValues('shippingAddress');
+      const updatedShippingAddress = {
+        ...form.getValues('shippingAddress'),
+        ...(extraAddressData || {})
+      };
 
       await addShippingAddress(updatedShippingAddress);
       await addShippingMethod(method.code, method.name);
@@ -346,7 +362,7 @@ export function Shipment() {
     setSelectedPickupAddressId(normalizeId(address.addressId));
     const addressData = mapCustomerAddressToForm(address);
     setShippingAddressFields(addressData);
-    await updateShipment(pickupMethod);
+    await updateShipment(pickupMethod, getPickupMetaFromAddress(address));
   };
 
   const saveCourierRecipient = async () => {
@@ -399,8 +415,24 @@ export function Shipment() {
       postcode: pointDetail.postal_code || '000000'
     };
 
+    const pickupMeta = {
+      pickup_point_id: pointDetail.id,
+      pickup_service_code: pointDetail.service_code || 'cdek',
+      pickup_external_id: pointDetail.external_id || null,
+      pickup_data: {
+        id: pointDetail.id,
+        external_id: pointDetail.external_id,
+        service_code: pointDetail.service_code,
+        postal_code: pointDetail.postal_code,
+        city: pointDetail.city,
+        address: pointDetail.address,
+        region: pointDetail.region,
+        name: pointDetail.name
+      }
+    };
+
     setShippingAddressFields(pickupAddressData);
-    await updateShipment(pickupMethod);
+    await updateShipment(pickupMethod, pickupMeta);
 
     if (customer) {
       const pickupData = {

@@ -55,40 +55,15 @@ export default async function postCalculate(request: Request, response: Response
     let weightGrams = weight !== undefined ? parseWeightToGrams(weight) : undefined;
     let weightSource: 'body' | 'cart' = weightGrams !== undefined ? 'body' : 'cart';
 
+    const parseDimension = (value: unknown): number | undefined => {
+      if (value === undefined || value === null || value === '') {
+        return undefined;
+      }
+      const num = parseFloat(String(value));
+      return Number.isFinite(num) ? num : undefined;
+    };
+
     // Валидация размеров (если указаны)
-    if (length !== undefined) {
-      const lengthNum = parseFloat(length);
-      if (isNaN(lengthNum) || lengthNum <= 0 || lengthNum > 1000) {
-        response.$body = {
-          success: false,
-          message: 'Length must be a positive number between 0 and 1000 cm'
-        };
-        response.statusCode = 400;
-        return;
-      }
-    }
-    if (width !== undefined) {
-      const widthNum = parseFloat(width);
-      if (isNaN(widthNum) || widthNum <= 0 || widthNum > 1000) {
-        response.$body = {
-          success: false,
-          message: 'Width must be a positive number between 0 and 1000 cm'
-        };
-        response.statusCode = 400;
-        return;
-      }
-    }
-    if (height !== undefined) {
-      const heightNum = parseFloat(height);
-      if (isNaN(heightNum) || heightNum <= 0 || heightNum > 1000) {
-        response.$body = {
-          success: false,
-          message: 'Height must be a positive number between 0 and 1000 cm'
-        };
-        response.statusCode = 400;
-        return;
-      }
-    }
 
     // Получаем информацию о пункте выдачи
     // Если данные точки переданы в запросе - используем их (оптимизация)
@@ -160,10 +135,14 @@ export default async function postCalculate(request: Request, response: Response
     }
 
     // Пытаемся получить размеры из корзины (приоритет)
-    let finalLength: number | undefined = length ? parseFloat(length) : undefined;
-    let finalWidth: number | undefined = width ? parseFloat(width) : undefined;
-    let finalHeight: number | undefined = height ? parseFloat(height) : undefined;
-    let dimensionsSource: 'body' | 'cart' = 'body';
+    let finalLength: number | undefined = parseDimension(length);
+    let finalWidth: number | undefined = parseDimension(width);
+    let finalHeight: number | undefined = parseDimension(height);
+    const dimensionSources = {
+      length: finalLength !== undefined ? 'body' : 'cart',
+      width: finalWidth !== undefined ? 'body' : 'cart',
+      height: finalHeight !== undefined ? 'body' : 'cart'
+    };
 
     try {
       // Получаем имя cookie из конфига (аналогично getFrontStoreSessionCookieName)
@@ -189,15 +168,15 @@ export default async function postCalculate(request: Request, response: Response
           // Используем данные из корзины, если они есть
           if (cartLength !== null && cartLength !== undefined) {
             finalLength = parseFloat(String(cartLength));
-            dimensionsSource = 'cart';
+            dimensionSources.length = 'cart';
           }
           if (cartWidth !== null && cartWidth !== undefined) {
             finalWidth = parseFloat(String(cartWidth));
-            dimensionsSource = 'cart';
+            dimensionSources.width = 'cart';
           }
           if (cartHeight !== null && cartHeight !== undefined) {
             finalHeight = parseFloat(String(cartHeight));
-            dimensionsSource = 'cart';
+            dimensionSources.height = 'cart';
           }
           if (cartWeight !== null && cartWeight !== undefined) {
             const cartWeightNum = parseFloat(String(cartWeight));
@@ -235,9 +214,39 @@ export default async function postCalculate(request: Request, response: Response
       return;
     }
 
+    if (finalLength !== undefined && (finalLength <= 0 || finalLength > 1000)) {
+      response.$body = {
+        success: false,
+        message: 'Length must be a positive number between 0 and 1000 cm'
+      };
+      response.statusCode = 400;
+      return;
+    }
+    if (finalWidth !== undefined && (finalWidth <= 0 || finalWidth > 1000)) {
+      response.$body = {
+        success: false,
+        message: 'Width must be a positive number between 0 and 1000 cm'
+      };
+      response.statusCode = 400;
+      return;
+    }
+    if (finalHeight !== undefined && (finalHeight <= 0 || finalHeight > 1000)) {
+      response.$body = {
+        success: false,
+        message: 'Height must be a positive number between 0 and 1000 cm'
+      };
+      response.statusCode = 400;
+      return;
+    }
+
     const weightKg = weightGrams / 1000;
 
-    console.log('[postCalculate] Dimensions source:', dimensionsSource, {
+    console.log('[postCalculate] Dimensions from body:', {
+      length,
+      width,
+      height
+    });
+    console.log('[postCalculate] Dimensions source:', dimensionSources, {
       length: finalLength,
       width: finalWidth,
       height: finalHeight
@@ -271,7 +280,7 @@ export default async function postCalculate(request: Request, response: Response
               region: point.region || undefined
             },
             packages: [{
-              weight: weightKg,
+              weight: weightGrams,
               length: finalLength,
               width: finalWidth,
               height: finalHeight

@@ -196,7 +196,7 @@ export class CdekService {
       },
       to_location: toLocation,
       packages: params.packages.map(pkg => ({
-        weight: Math.round(pkg.weight * 1000), // CDEK требует вес в граммах (целое число)
+        weight: Math.round(pkg.weight), // CDEK требует вес в граммах (целое число)
         length: Math.round(pkg.length || 10), // Размеры в см (целые числа)
         width: Math.round(pkg.width || 10),
         height: Math.round(pkg.height || 10),
@@ -406,5 +406,4 @@ export class CdekService {
     };
   }
 }
-
 
