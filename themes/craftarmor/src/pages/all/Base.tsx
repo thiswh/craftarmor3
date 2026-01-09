@@ -122,6 +122,11 @@ export const query = `
         }
         postcode
         isDefault
+        deliveryType
+        pickupPointId
+        pickupServiceCode
+        pickupExternalId
+        pickupData
         updateApi
         deleteApi
       }

@@ -22,15 +22,15 @@ export default async function postCalculate(request: Request, response: Response
     
     const {
       pointId,
-      serviceCode,
       weight,
       length,
       width,
       height,
       declaredValue,
       phoneNumber,
-      pointData  // Опциональные данные точки для оптимизации (избегаем повторного запроса к БД)
+      pointData
     } = body;
+    let serviceCode = body.serviceCode;
 
     // Валидация обязательных параметров
     if (!pointId || !serviceCode) {
@@ -95,8 +95,12 @@ export default async function postCalculate(request: Request, response: Response
     // Если нет - загружаем из БД (fallback для обратной совместимости)
     let point: any;
 
-    if (pointData) {
-      // Используем переданные данные точки (БЕЗ запроса к БД)
+    const repository = new DeliveryPointRepository(pool);
+    point = await repository.getPointById(pointId);
+
+    if (point) {
+      serviceCode = point.service_code || serviceCode;
+    } else if (pointData) {
       point = {
         id: pointId,
         postal_code: pointData.postal_code || pointData.postalCode,
@@ -106,7 +110,8 @@ export default async function postCalculate(request: Request, response: Response
         service_code: pointData.service_code || pointData.serviceCode || serviceCode
       };
 
-      // Валидация обязательных полей для расчета
+      serviceCode = point.service_code || serviceCode;
+
       if (serviceCode === 'cdek' && !point.postal_code && !point.city) {
         response.$body = {
           success: false,
@@ -134,21 +139,14 @@ export default async function postCalculate(request: Request, response: Response
         return;
       }
     } else {
-      // Fallback: загружаем из БД (для обратной совместимости)
-      const repository = new DeliveryPointRepository(pool);
-      point = await repository.getPointById(pointId);
-
-      if (!point) {
-        response.$body = {
-          success: false,
-          message: 'Delivery point not found'
-        };
-        response.statusCode = 404;
-        return;
-      }
+      response.$body = {
+        success: false,
+        message: 'Delivery point not found'
+      };
+      response.statusCode = 404;
+      return;
     }
 
-    // Получаем настройки отправителя из конфига или переменных окружения
     const senderPostalCode = process.env.SHOP_SENDER_POSTAL || '';
     const senderCity = process.env.SHOP_SENDER_CITY || '';
 

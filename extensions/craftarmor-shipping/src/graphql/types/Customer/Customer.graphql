@@ -1,0 +1,7 @@
+extend type CustomerAddress {
+  deliveryType: String
+  pickupPointId: Int
+  pickupServiceCode: String
+  pickupExternalId: String
+  pickupData: JSON
+}

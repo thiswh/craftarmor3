@@ -213,7 +213,11 @@ export class DeliveryPointRepository {
         dp.latitude,
         dp.longitude,
         ds.code as service_code,
-        dp.name
+        dp.name,
+        dp.address,
+        dp.city,
+        dp.region,
+        dp.postal_code
       FROM delivery_point dp
       INNER JOIN delivery_service ds ON dp.service_id = ds.id
       WHERE dp.is_active = true
@@ -344,5 +348,4 @@ export class DeliveryPointRepository {
     );
   }
 }
-
 

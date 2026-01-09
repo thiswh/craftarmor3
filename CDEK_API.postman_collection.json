@@ -1,0 +1,416 @@
+{
+	"info": {
+		"_postman_id": "cdek-api-collection",
+		"name": "CDEK API - Прямые запросы",
+		"description": "Коллекция запросов для прямого тестирования API CDEK (https://api.cdek.ru).\n\nВсе запросы реализованы в проекте и используются для:\n- Получения OAuth токена\n- Получения списка пунктов выдачи\n- Расчет стоимости доставки\n\n**Важно:**\n- Замените переменные {{cdek_client_id}} и {{cdek_client_secret}} на ваши реальные учетные данные\n- Токен автоматически обновляется, но для ручного тестирования используйте запрос \"1. Получение OAuth токена\"\n- После получения токена скопируйте его в переменную {{cdek_access_token}}",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. OAuth - Получение токена доступа",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"    const jsonData = pm.response.json();",
+							"    if (jsonData.access_token) {",
+							"        pm.collectionVariables.set('cdek_access_token', jsonData.access_token);",
+							"        pm.collectionVariables.set('cdek_token_expires_in', jsonData.expires_in);",
+							"        console.log('Токен сохранен в переменную cdek_access_token');",
+							"        console.log('Токен действителен ' + jsonData.expires_in + ' секунд');",
+							"    }",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/x-www-form-urlencoded"
+					}
+				],
+				"body": {
+					"mode": "urlencoded",
+					"urlencoded": [
+						{
+							"key": "grant_type",
+							"value": "client_credentials",
+							"type": "text"
+						},
+						{
+							"key": "client_id",
+							"value": "{{cdek_client_id}}",
+							"type": "text",
+							"description": "Ваш Client ID из личного кабинета CDEK"
+						},
+						{
+							"key": "client_secret",
+							"value": "{{cdek_client_secret}}",
+							"type": "text",
+							"description": "Ваш Client Secret из личного кабинета CDEK"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/oauth/token",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"oauth",
+						"token"
+					]
+				},
+				"description": "Получение OAuth2 токена для доступа к API CDEK.\n\n**Параметры:**\n- `grant_type`: всегда `client_credentials`\n- `client_id`: ваш Client ID из личного кабинета CDEK\n- `client_secret`: ваш Client Secret из личного кабинета CDEK\n\n**Ответ:**\n```json\n{\n  \"access_token\": \"eyJ0eXAiOiJKV1QiLCJhbGc...\",\n  \"token_type\": \"Bearer\",\n  \"expires_in\": 3600,\n  \"scope\": \"...\"\n}\n```\n\n**Примечание:**\n- Токен действителен 1 час (3600 секунд)\n- Токен автоматически сохраняется в переменную `cdek_access_token` после успешного запроса\n- Используйте этот токен в заголовке `Authorization: Bearer {token}` для всех последующих запросов"
+			},
+			"response": []
+		},
+		{
+			"name": "2. Получение списка пунктов выдачи",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{cdek_access_token}}",
+						"type": "text",
+						"description": "OAuth токен, полученный из запроса \"1. OAuth - Получение токена доступа\""
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/deliverypoints",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"deliverypoints"
+					],
+					"query": [
+						{
+							"key": "type",
+							"value": "PVZ",
+							"description": "Тип пункта выдачи (PVZ - пункт выдачи, POSTAMAT - постамат). Опционально.",
+							"disabled": true
+						},
+						{
+							"key": "city",
+							"value": "Москва",
+							"description": "Фильтр по городу. Опционально.",
+							"disabled": true
+						},
+						{
+							"key": "postal_code",
+							"value": "101000",
+							"description": "Фильтр по почтовому индексу. Опционально.",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Получение списка всех пунктов выдачи CDEK.\n\n**Заголовки:**\n- `Authorization: Bearer {token}` - OAuth токен\n\n**Опциональные параметры запроса:**\n- `type` - тип пункта (PVZ, POSTAMAT)\n- `city` - фильтр по городу\n- `postal_code` - фильтр по почтовому индексу\n\n**Ответ:**\nМассив объектов с информацией о пунктах выдачи:\n```json\n[\n  {\n    \"code\": \"MSK1\",\n    \"name\": \"ПВЗ Москва 1\",\n    \"location\": {\n      \"latitude\": \"55.7558\",\n      \"longitude\": \"37.6173\",\n      \"address\": \"ул. Примерная, д. 1\",\n      \"city\": \"Москва\",\n      \"region\": \"Московская область\",\n      \"postal_code\": \"101000\"\n    },\n    \"type\": \"PVZ\",\n    \"work_time\": \"пн-пт: 9:00-18:00\",\n    \"owner_code\": \"...\"\n  }\n]\n```\n\n**Использование в проекте:**\nЭтот запрос используется для синхронизации пунктов выдачи в базу данных через метод `CdekService.getDeliveryPoints()`"
+			},
+			"response": []
+		},
+		{
+			"name": "3. Получение списка доступных тарифов",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{cdek_access_token}}",
+						"type": "text",
+						"description": "OAuth токен, полученный из запроса \"1. OAuth - Получение токена доступа\""
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/calculator/availableTariffs",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"calculator",
+						"availableTariffs"
+					],
+					"query": [
+						{
+							"key": "type",
+							"value": "1",
+							"description": "Тип доставки: 1 - доставка, 2 - возврат, 3 - обмен. По умолчанию: 1",
+							"disabled": true
+						},
+						{
+							"key": "from_location[postal_code]",
+							"value": "101000",
+							"description": "Почтовый индекс точки отправления. Опционально.",
+							"disabled": true
+						},
+						{
+							"key": "to_location[postal_code]",
+							"value": "190000",
+							"description": "Почтовый индекс точки назначения. Опционально.",
+							"disabled": true
+						},
+						{
+							"key": "to_location[city]",
+							"value": "Санкт-Петербург",
+							"description": "Город точки назначения (если нет postal_code). Опционально.",
+							"disabled": true
+						},
+						{
+							"key": "to_location[country_code]",
+							"value": "RU",
+							"description": "Код страны точки назначения. По умолчанию: RU",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Получение списка всех доступных тарифов CDEK для указанного маршрута.\n\n**Заголовки:**\n- `Authorization: Bearer {token}` - OAuth токен\n\n**Опциональные параметры запроса:**\n- `type` - тип доставки:\n  - `1` - доставка (по умолчанию)\n  - `2` - возврат\n  - `3` - обмен\n- `from_location[postal_code]` - почтовый индекс точки отправления\n- `to_location[postal_code]` - почтовый индекс точки назначения (рекомендуется)\n- `to_location[city]` - город точки назначения (если нет postal_code)\n- `to_location[country_code]` - код страны точки назначения (по умолчанию: RU)\n\n**Ответ:**\nМассив объектов с информацией о доступных тарифах:\n```json\n[\n  {\n    \"tariff_code\": 136,\n    \"tariff_name\": \"Посылка\",\n    \"tariff_description\": \"Стандартная посылка\",\n    \"delivery_mode\": 4,\n    \"delivery_mode_name\": \"склад-склад\",\n    \"available\": true,\n    \"min_weight\": 0,\n    \"max_weight\": 30000,\n    \"min_length\": 0,\n    \"max_length\": 150,\n    \"min_width\": 0,\n    \"max_width\": 150,\n    \"min_height\": 0,\n    \"max_height\": 150\n  },\n  {\n    \"tariff_code\": 137,\n    \"tariff_name\": \"Экспресс\",\n    \"tariff_description\": \"Экспресс-доставка\",\n    \"delivery_mode\": 4,\n    \"delivery_mode_name\": \"склад-склад\",\n    \"available\": true,\n    \"min_weight\": 0,\n    \"max_weight\": 30000,\n    \"min_length\": 0,\n    \"max_length\": 150,\n    \"min_width\": 0,\n    \"max_width\": 150,\n    \"min_height\": 0,\n    \"max_height\": 150\n  },\n  {\n    \"tariff_code\": 139,\n    \"tariff_name\": \"Супер-экспресс\",\n    \"tariff_description\": \"Срочная доставка\",\n    \"delivery_mode\": 4,\n    \"delivery_mode_name\": \"склад-склад\",\n    \"available\": true,\n    \"min_weight\": 0,\n    \"max_weight\": 30000,\n    \"min_length\": 0,\n    \"max_length\": 150,\n    \"min_width\": 0,\n    \"max_width\": 150,\n    \"min_height\": 0,\n    \"max_height\": 150\n  }\n]\n```\n\n**Популярные тарифы CDEK:**\n- `136` - Посылка (стандартная доставка, самый дешевый)\n- `137` - Экспресс (быстрая доставка)\n- `139` - Супер-экспресс (срочная доставка)\n- `138` - Экономичная посылка\n- `233` - Магистральный экспресс (для больших грузов)\n- `234` - Магистральный супер-экспресс\n\n**Примечание:**\n- Если не указаны параметры маршрута, вернутся все доступные тарифы\n- Если указаны параметры маршрута, вернутся только тарифы, доступные для этого маршрута\n- Параметры `min_weight`, `max_weight`, `min_length`, `max_length`, `min_width`, `max_width`, `min_height`, `max_height` показывают ограничения по размерам и весу для каждого тарифа\n\n**Использование:**\nЭтот запрос полезен для:\n- Получения списка всех доступных тарифов\n- Проверки доступности конкретного тарифа для маршрута\n- Получения информации об ограничениях по весу и размерам для каждого тарифа\n- Выбора подходящего тарифа перед расчетом стоимости доставки\n\n**Документация:**\nhttps://apidoc.cdek.ru/#tag/calculator/operation/availableTariffs"
+			},
+			"response": []
+		},
+		{
+			"name": "4. Расчет доставки - Базовый (tarifflist)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{cdek_access_token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"type\": 1,\n  \"currency\": 1,\n  \"lang\": \"rus\",\n  \"from_location\": {\n    \"postal_code\": \"101000\",\n    \"country_code\": \"RU\"\n  },\n  \"to_location\": {\n    \"postal_code\": \"190000\",\n    \"country_code\": \"RU\",\n    \"city\": \"Санкт-Петербург\"\n  },\n  \"packages\": [\n    {\n      \"weight\": 2000,\n      \"length\": 30,\n      \"width\": 20,\n      \"height\": 15\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/calculator/tarifflist",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"calculator",
+						"tarifflist"
+					]
+				},
+				"description": "Расчет стоимости доставки без дополнительных услуг.\n\n**Параметры запроса:**\n- `type`: 1 - доставка (всегда 1)\n- `currency`: 1 - RUB (рубли)\n- `lang`: \"rus\" - язык ответа\n- `from_location`: точка отправления\n  - `postal_code`: почтовый индекс отправителя (обязательно)\n  - `country_code`: код страны (RU)\n- `to_location`: точка назначения\n  - `postal_code`: почтовый индекс получателя (рекомендуется)\n  - `city`: город получателя (если нет postal_code)\n  - `country_code`: код страны (RU)\n  - `region`: регион (опционально)\n  - `address`: адрес (опционально)\n- `packages`: массив посылок\n  - `weight`: вес в граммах (целое число)\n  - `length`: длина в см (целое число)\n  - `width`: ширина в см (целое число)\n  - `height`: высота в см (целое число)\n\n**Ответ:**\n```json\n{\n  \"tariff_codes\": [\n    {\n      \"tariff_code\": 136,\n      \"tariff_name\": \"Посылка\",\n      \"delivery_mode\": 4,\n      \"delivery_sum\": 345.00,\n      \"period_min\": 2,\n      \"period_max\": 4,\n      \"currency\": \"RUB\"\n    },\n    {\n      \"tariff_code\": 137,\n      \"tariff_name\": \"Экспресс\",\n      \"delivery_mode\": 4,\n      \"delivery_sum\": 740.00,\n      \"period_min\": 1,\n      \"period_max\": 2,\n      \"currency\": \"RUB\"\n    }\n  ]\n}\n```\n\n**Использование в проекте:**\nИспользуется когда не указаны дополнительные услуги (страхование, SMS). Метод `CdekService.calculateDelivery()` автоматически выбирает этот эндпоинт."
+			},
+			"response": []
+		},
+		{
+			"name": "5. Расчет доставки - С услугами (tariffAndService)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{cdek_access_token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"type\": 1,\n  \"currency\": 1,\n  \"lang\": \"rus\",\n  \"from_location\": {\n    \"postal_code\": \"101000\",\n    \"country_code\": \"RU\"\n  },\n  \"to_location\": {\n    \"postal_code\": \"190000\",\n    \"country_code\": \"RU\",\n    \"city\": \"Санкт-Петербург\"\n  },\n  \"packages\": [\n    {\n      \"weight\": 2000,\n      \"length\": 30,\n      \"width\": 20,\n      \"height\": 15\n    }\n  ],\n  \"services\": [\n    {\n      \"code\": \"INSURANCE\",\n      \"parameter\": \"5000\"\n    },\n    {\n      \"code\": \"SMS\",\n      \"parameter\": \"+79001234567\"\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/calculator/tariffAndService",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"calculator",
+						"tariffAndService"
+					]
+				},
+				"description": "Расчет стоимости доставки с дополнительными услугами (страхование, SMS и т.д.).\n\n**Параметры запроса:**\nВсе параметры такие же, как в \"3. Расчет доставки - Базовый\", плюс:\n- `services`: массив дополнительных услуг\n  - `code`: код услуги\n    - `INSURANCE` - страхование (объявленная стоимость)\n    - `SMS` - SMS уведомление\n    - `GIVE_CLIENT` - вручение в руки получателю\n    - `DANGER_CARGO` - опасный груз\n    - и другие (см. документацию CDEK)\n  - `parameter`: параметр услуги (строка)\n    - Для `INSURANCE`: объявленная стоимость в рублях (например, \"5000\")\n    - Для `SMS`: номер телефона (например, \"+79001234567\")\n\n**Ответ:**\n```json\n{\n  \"tariff_codes\": [\n    {\n      \"tariff_code\": 136,\n      \"status\": true,\n      \"result\": {\n        \"delivery_sum\": 345.00,\n        \"total_sum\": 545.00,\n        \"period_min\": 2,\n        \"period_max\": 4,\n        \"currency\": \"RUB\"\n      }\n    },\n    {\n      \"tariff_code\": 137,\n      \"status\": true,\n      \"result\": {\n        \"delivery_sum\": 740.00,\n        \"total_sum\": 940.00,\n        \"period_min\": 1,\n        \"period_max\": 2,\n        \"currency\": \"RUB\"\n      }\n    }\n  ]\n}\n```\n\n**Важно:**\n- `delivery_sum` - стоимость доставки без услуг\n- `total_sum` - итоговая стоимость с учетом услуг\n- В проекте используется `total_sum` для финальной стоимости\n\n**Использование в проекте:**\nИспользуется когда указаны дополнительные услуги (declaredValue или phoneNumber). Метод `CdekService.calculateDelivery()` автоматически выбирает этот эндпоинт."
+			},
+			"response": []
+		},
+		{
+			"name": "6. Расчет доставки - С конкретным тарифом",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{cdek_access_token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"type\": 1,\n  \"currency\": 1,\n  \"lang\": \"rus\",\n  \"tariff_code\": 136,\n  \"from_location\": {\n    \"postal_code\": \"101000\",\n    \"country_code\": \"RU\"\n  },\n  \"to_location\": {\n    \"postal_code\": \"190000\",\n    \"country_code\": \"RU\",\n    \"city\": \"Санкт-Петербург\"\n  },\n  \"packages\": [\n    {\n      \"weight\": 2000,\n      \"length\": 30,\n      \"width\": 20,\n      \"height\": 15\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/calculator/tarifflist",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"calculator",
+						"tarifflist"
+					]
+				},
+				"description": "Расчет стоимости доставки для конкретного тарифа.\n\n**Параметры запроса:**\nВсе параметры такие же, как в \"3. Расчет доставки - Базовый\", плюс:\n- `tariff_code`: код тарифа (опционально)\n  - 136 - Посылка\n  - 137 - Экспресс\n  - 139 - Супер-экспресс\n  - и другие (см. документацию CDEK)\n\n**Примечание:**\nЕсли указан `tariff_code`, API вернет расчет только для этого тарифа. Если тариф недоступен для указанного маршрута, вернется ошибка.\n\n**Использование в проекте:**\nПараметр `tariffCode` опционален в методе `CdekService.calculateDelivery()`. Если не указан, выбирается оптимальный тариф автоматически."
+			},
+			"response": []
+		},
+		{
+			"name": "7. Расчет доставки - Несколько посылок",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{cdek_access_token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"type\": 1,\n  \"currency\": 1,\n  \"lang\": \"rus\",\n  \"from_location\": {\n    \"postal_code\": \"101000\",\n    \"country_code\": \"RU\"\n  },\n  \"to_location\": {\n    \"postal_code\": \"190000\",\n    \"country_code\": \"RU\",\n    \"city\": \"Санкт-Петербург\"\n  },\n  \"packages\": [\n    {\n      \"weight\": 1500,\n      \"length\": 25,\n      \"width\": 15,\n      \"height\": 10\n    },\n    {\n      \"weight\": 3000,\n      \"length\": 40,\n      \"width\": 30,\n      \"height\": 20\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/calculator/tarifflist",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"calculator",
+						"tarifflist"
+					]
+				},
+				"description": "Пример расчета доставки для нескольких посылок в одном заказе.\n\n**Параметры запроса:**\n- `packages`: массив посылок (может содержать несколько элементов)\n  - Каждая посылка имеет свои параметры: weight, length, width, height\n\n**Использование в проекте:**\nМетод `CdekService.calculateDelivery()` принимает массив `packages`, что позволяет рассчитывать доставку для нескольких товаров одновременно."
+			},
+			"response": []
+		},
+		{
+			"name": "8. Расчет доставки - Только по городу (без индекса)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{cdek_access_token}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"type\": 1,\n  \"currency\": 1,\n  \"lang\": \"rus\",\n  \"from_location\": {\n    \"postal_code\": \"101000\",\n    \"country_code\": \"RU\"\n  },\n  \"to_location\": {\n    \"country_code\": \"RU\",\n    \"city\": \"Санкт-Петербург\",\n    \"region\": \"Ленинградская область\"\n  },\n  \"packages\": [\n    {\n      \"weight\": 2000,\n      \"length\": 30,\n      \"width\": 20,\n      \"height\": 15\n    }\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{cdek_api_url}}/v2/calculator/tarifflist",
+					"host": [
+						"{{cdek_api_url}}"
+					],
+					"path": [
+						"v2",
+						"calculator",
+						"tarifflist"
+					]
+				},
+				"description": "Пример расчета доставки, когда у получателя указан только город без почтового индекса.\n\n**Параметры запроса:**\n- `to_location`: вместо `postal_code` используется `city` и опционально `region`\n\n**Важно:**\n- CDEK требует либо `postal_code`, либо `city` для `to_location`\n- Рекомендуется использовать `postal_code` для более точного расчета\n- Если `postal_code` недоступен, можно использовать `city`\n\n**Использование в проекте:**\nМетод `CdekService.calculateDelivery()` поддерживает оба варианта. Если `postal_code` не указан, используется `city`."
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "cdek_api_url",
+			"value": "https://api.cdek.ru",
+			"type": "string",
+			"description": "Базовый URL API CDEK"
+		},
+		{
+			"key": "cdek_client_id",
+			"value": "",
+			"type": "string",
+			"description": "Ваш Client ID из личного кабинета CDEK. Замените на реальное значение."
+		},
+		{
+			"key": "cdek_client_secret",
+			"value": "",
+			"type": "string",
+			"description": "Ваш Client Secret из личного кабинета CDEK. Замените на реальное значение."
+		},
+		{
+			"key": "cdek_access_token",
+			"value": "",
+			"type": "string",
+			"description": "OAuth токен доступа. Автоматически заполняется после выполнения запроса \"1. OAuth - Получение токена доступа\""
+		},
+		{
+			"key": "cdek_token_expires_in",
+			"value": "",
+			"type": "string",
+			"description": "Время жизни токена в секундах"
+		}
+	]
+}
