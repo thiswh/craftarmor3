@@ -17,10 +17,17 @@ const LoggedIn: React.FC<{
   fullName: string;
   email: string;
   uuid: string;
-}> = ({ uuid, fullName, email }) => {
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const isMounted = useRef(true);
-  const { logout } = useCustomerDispatch();
+  recipientName: string;
+  recipientPhone: string;
+  onChangeRecipient: () => void;
+}> = ({
+  uuid,
+  fullName,
+  email,
+  recipientName,
+  recipientPhone,
+  onChangeRecipient
+}) => {
   const { updateCheckoutData } = useCheckoutDispatch();
 
   useEffect(() => {
@@ -33,78 +40,51 @@ const LoggedIn: React.FC<{
     });
   }, [fullName, email]);
 
-  useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
-
-  const handleLogout = async () => {
-    if (isLoggingOut) return;
-
-    try {
-      setIsLoggingOut(true);
-      await logout();
-      toast.success(_('Successfully logged out'));
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : _('Logout failed');
-      toast.error(errorMessage);
-    } finally {
-      if (isMounted.current) {
-        setIsLoggingOut(false);
-      }
-    }
-  };
-
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="flex-shrink-0">
-            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-              <svg
-                className="w-6 h-6 text-blue-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                />
-              </svg>
-            </div>
+    <div className="rounded-lg border bg-white p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="text-gray-500">
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+              />
+            </svg>
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center space-x-2">
-              <svg
-                className="w-4 h-4 text-blue-500"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <h3 className="text-sm font-medium text-blue-800">
-                {_('Logged in as')} {fullName}
-              </h3>
-            </div>
-            <p className="text-sm text-blue-600 mt-1">{email}</p>
+          <div className="flex-1 min-w-0 text-sm font-medium text-gray-900">
+            <span>{recipientName || fullName || '—'}</span>
+            {recipientPhone ? (
+              <span className="ml-2 text-gray-600">{recipientPhone}</span>
+            ) : null}
           </div>
         </div>
         <button
           type="button"
-          onClick={handleLogout}
-          disabled={isLoggingOut}
-          className="ml-3 text-sm text-blue-700 hover:text-blue-900 underline disabled:opacity-50 disabled:cursor-not-allowed"
+          className="text-gray-400 hover:text-gray-700"
+          onClick={onChangeRecipient}
+          aria-label={_('Change')}
         >
-          {isLoggingOut ? _('Logging out...') : _('Logout')}
+          <svg
+            className="h-4 w-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 5l7 7-7 7"
+            />
+          </svg>
         </button>
       </div>
     </div>
@@ -236,15 +216,30 @@ const Guest: React.FC<{
 export function ContactInformation() {
   const { customer } = useCustomer();
   const { data: cart } = useCartState();
+  const { form } = useCheckout();
+  const watchedShippingAddress = form.watch('shippingAddress');
+  const recipientName =
+    watchedShippingAddress?.full_name || customer?.fullName || '';
+  const recipientPhone =
+    watchedShippingAddress?.telephone || (customer as any)?.phone || '';
+  const handleChangeRecipient = () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('checkout:open-recipient-panel'));
+  };
 
   return (
     <div className="checkout-contact checkout-step">
-      <h1 className="checkout-step-title">{_('Contact Information')}</h1>
+      <h3>{_('Recipient')}</h3>
       {customer ? (
         <LoggedIn
           fullName={customer.fullName}
           email={customer.email}
           uuid={customer.uuid}
+          recipientName={recipientName}
+          recipientPhone={recipientPhone}
+          onChangeRecipient={handleChangeRecipient}
         />
       ) : (
         <Guest email={cart.customerEmail || ''} />

@@ -8,17 +8,20 @@ import {
   useCheckout,
   useCheckoutDispatch
 } from '@components/frontStore/checkout/CheckoutContext.js';
-import { AddressSummary } from '@components/common/customer/address/AddressSummary.jsx';
-import CustomerAddressForm from '@components/frontStore/customer/address/addressForm/Index.js';
+import { AddressFormLoadingSkeleton } from '@components/frontStore/customer/address/addressForm/AddressFormLoadingSkeleton.js';
 import { NameAndTelephone } from '@components/frontStore/customer/address/addressForm/NameAndTelephone.js';
+import { ProvinceAndPostcode } from '@components/frontStore/customer/address/addressForm/ProvinceAndPostcode.js';
+import { InputField } from '@components/common/form/InputField.js';
+import { SelectField } from '@components/common/form/SelectField.js';
 import {
   useCustomer,
   useCustomerDispatch
 } from '@components/frontStore/customer/CustomerContext.jsx';
 import type { ExtendedCustomerAddress } from '@components/frontStore/customer/CustomerContext.jsx';
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
-import { useWatch } from 'react-hook-form';
+import { useFormContext, useWatch } from 'react-hook-form';
 import { toast } from 'react-toastify';
+import { useQuery } from 'urql';
 
 interface DeliveryCalculation {
   cost: number;
@@ -43,11 +46,181 @@ type DeliveryType = 'pickup' | 'courier';
 const PICKUP_METHOD_ID = 'd3d16c61-5acf-4cf7-93d9-258e753cd58b';
 const COURIER_METHOD_ID = '1ad1dde4-0b52-4fb9-965f-8c3b5be739e7';
 
+type CustomerRecipient = {
+  recipientId?: number;
+  uuid?: string;
+  fullName?: string | null;
+  telephone?: string | null;
+  isDefault?: boolean | null;
+  updateApi?: string;
+  deleteApi?: string;
+};
+
+const CountriesQuery = `
+  query Country {
+    allowedCountries  {
+      value: code
+      label: name
+      provinces {
+        label: name
+        value: code
+      }
+    }
+  }
+`;
+
+const AddressOnlyForm = ({
+  address = {},
+  fieldNamePrefix = 'shippingAddress'
+}: {
+  address?: Record<string, any>;
+  fieldNamePrefix?: string;
+}) => {
+  const [result] = useQuery({
+    query: CountriesQuery
+  });
+  const { data, fetching, error } = result;
+  const { watch, setValue } = useFormContext();
+
+  if (fetching) return <AddressFormLoadingSkeleton />;
+  if (error) {
+    return <p className="text-critical">{error.message}</p>;
+  }
+
+  const getFieldName = (fieldName: string) =>
+    fieldNamePrefix ? `${fieldNamePrefix}.${fieldName}` : fieldName;
+
+  const selectedCountry = watch(
+    getFieldName('country'),
+    address?.country?.code ?? address?.country ?? ''
+  );
+
+  return (
+    <div className="space-y-4">
+      <InputField
+        name={getFieldName('address_1')}
+        label={_('Address')}
+        placeholder={_('Address')}
+        defaultValue={address?.address1 || ''}
+        required
+        validation={{
+          required: _('Address is required')
+        }}
+      />
+      <InputField
+        name={getFieldName('address_2')}
+        label={_('Address 2')}
+        placeholder={_('Address 2')}
+        defaultValue={address?.address2 || ''}
+      />
+      <InputField
+        name={getFieldName('city')}
+        label={_('City')}
+        placeholder={_('City')}
+        defaultValue={address?.city || ''}
+      />
+      <SelectField
+        defaultValue={address?.country?.code ?? address?.country ?? ''}
+        label={_('Country')}
+        name={getFieldName('country')}
+        placeholder={_('Country')}
+        onChange={(value) => {
+          setValue(getFieldName('country'), value.target.value);
+          setValue(getFieldName('province'), '');
+        }}
+        required
+        validation={{ required: _('Country is required') }}
+        options={data?.allowedCountries || []}
+      />
+      <ProvinceAndPostcode
+        country={selectedCountry}
+        provinces={
+          data?.allowedCountries?.find((item) => item.value === selectedCountry)
+            ?.provinces || []
+        }
+        province={{
+          value: address?.province?.code ?? address?.province ?? '',
+          label: address?.province?.name || ''
+        }}
+        postcode={address?.postcode || ''}
+        getFieldName={getFieldName}
+      />
+    </div>
+  );
+};
+
+const DeliveryAddressSummary = ({
+  address
+}: {
+  address: ExtendedCustomerAddress;
+}) => {
+  const address1 = address.address1 || (address as any).address_1 || '';
+  const address2 = address.address2 || (address as any).address_2 || '';
+  const addressLine = [address1, address2].filter(Boolean).join(', ');
+  const province =
+    address.province?.code ||
+    address.province?.name ||
+    (address as any).province ||
+    '';
+  const city = address.city || '';
+  const postcode = address.postcode || '';
+  const locationLine = [city, province, postcode].filter(Boolean).join(', ');
+
+  return (
+    <div className="address__summary">
+      {addressLine ? <div className="address-one">{addressLine}</div> : null}
+      {locationLine ? (
+        <div className="city-province-postcode">
+          <div>{locationLine}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const normalizeDeliveryType = (address: ExtendedCustomerAddress): DeliveryType =>
   address.deliveryType === 'pickup' ? 'pickup' : 'courier';
 
 const normalizeId = (value?: string | number | null) =>
   value === undefined || value === null ? '' : String(value);
+
+const getAddressIdValue = (address: ExtendedCustomerAddress) =>
+  (address as any).addressId ??
+  (address as any).cartAddressId ??
+  (address as any).customerAddressId ??
+  (address as any).cart_address_id ??
+  (address as any).customer_address_id ??
+  (address as any).address_id ??
+  (address as any).id ??
+  null;
+
+const getAddressId = (address: ExtendedCustomerAddress) =>
+  normalizeId(getAddressIdValue(address));
+
+const getAddressKey = (address: ExtendedCustomerAddress) =>
+  normalizeId(address.uuid || getAddressIdValue(address));
+
+const getRecipientKey = (fullName?: string | null, telephone?: string | null) => {
+  const name = (fullName || '').trim();
+  const phone = (telephone || '').trim();
+  const key = [name, phone].filter(Boolean).join('|');
+  return key;
+};
+
+const resolveAddressId = (
+  address: ExtendedCustomerAddress,
+  addresses: ExtendedCustomerAddress[]
+) => {
+  const direct = getAddressIdValue(address);
+  if (direct) {
+    return direct;
+  }
+  if (address.uuid) {
+    const matched = addresses.find((item) => item.uuid === address.uuid);
+    return matched ? getAddressIdValue(matched) : null;
+  }
+  return null;
+};
 
 const mapCustomerAddressToForm = (address: ExtendedCustomerAddress) => ({
   full_name: address.fullName || '',
@@ -60,7 +233,10 @@ const mapCustomerAddressToForm = (address: ExtendedCustomerAddress) => ({
   postcode: address.postcode || ''
 });
 
-const getPickupMetaFromAddress = (address: ExtendedCustomerAddress) => {
+const getPickupMetaFromAddress = (address?: ExtendedCustomerAddress | null) => {
+  if (!address) {
+    return null;
+  }
   const raw = address as any;
   return {
     pickup_point_id: raw.pickupPointId ?? raw.pickup_point_id ?? null,
@@ -70,25 +246,71 @@ const getPickupMetaFromAddress = (address: ExtendedCustomerAddress) => {
   };
 };
 
+const getPickupSummaryLines = (address: ExtendedCustomerAddress) => {
+  const pickupMeta = getPickupMetaFromAddress(address);
+  const pickupData = pickupMeta?.pickup_data as Record<string, string> | null;
+  const address2 =
+    pickupData?.name || address.address2 || (address as any).address_2 || '';
+  const address1 =
+    pickupData?.address || address.address1 || (address as any).address_1 || '';
+  const city = pickupData?.city || address.city || '';
+  const province =
+    pickupData?.region ||
+    address.province?.code ||
+    address.province?.name ||
+    address.province ||
+    '';
+  const postcode = pickupData?.postal_code || address.postcode || '';
+
+  const locationParts: string[] = [];
+  if (province && province !== city) {
+    locationParts.push(province);
+  }
+  if (city) {
+    locationParts.push(city);
+  }
+  const locationLine = locationParts.join(', ');
+
+  const detailParts = [locationLine, address1, postcode].filter(Boolean);
+  const detailLine = detailParts.join(', ');
+
+  const lines: string[] = [];
+  if (address2) {
+    lines.push(address2);
+  }
+  if (detailLine) {
+    lines.push(detailLine);
+  }
+  if (lines.length === 0 && address1) {
+    lines.push(address1);
+  }
+  return lines;
+};
+
 export function Shipment() {
   const [selectedPointId, setSelectedPointId] = useState<number | undefined>();
   const [deliveryType, setDeliveryType] = useState<DeliveryType>('pickup');
   const [panelType, setPanelType] = useState<DeliveryType>('pickup');
   const [panelStep, setPanelStep] = useState<'list' | 'detail'>('list');
   const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [isRecipientPanelOpen, setIsRecipientPanelOpen] = useState(false);
+  const [recipientPanelStep, setRecipientPanelStep] = useState<'list' | 'add'>('list');
   const [selectedPickupAddressId, setSelectedPickupAddressId] = useState<string>('');
   const [selectedCourierAddressId, setSelectedCourierAddressId] = useState<string>('');
+  const [selectedRecipientKey, setSelectedRecipientKey] = useState<string>('');
+  const defaultRecipientCreatedRef = useRef(false);
 
   const { data: cart, loadingStates } = useCartState();
   const {
     addShippingAddress,
     addShippingMethod,
-    fetchAvailableShippingMethods
+    fetchAvailableShippingMethods,
+    syncCartWithServer
   } = useCartDispatch();
   const { form } = useCheckout();
   const { updateCheckoutData } = useCheckoutDispatch();
   const { customer } = useCustomer();
-  const { addAddress, updateAddress, deleteAddress } = useCustomerDispatch();
+  const { addAddress, deleteAddress, setCustomer } = useCustomerDispatch();
 
   const shippingAddress = cart?.shippingAddress;
   const availableShippingMethods = cart?.availableShippingMethods;
@@ -108,6 +330,57 @@ export function Shipment() {
     };
 
   const customerAddresses = customer?.addresses || [];
+  const customerRecipients: CustomerRecipient[] =
+    ((customer as any)?.recipients as CustomerRecipient[]) || [];
+  const customerPhone = ((customer as any)?.phone as string) || '';
+  const addRecipientApi = (customer as any)?.addRecipientApi as string | undefined;
+  useEffect(() => {
+    if (!customer || customerAddresses.length === 0) {
+      return;
+    }
+    const needsNormalization = customerAddresses.some((address) => {
+      const directId = (address as any).addressId;
+      if (directId !== undefined && directId !== null) {
+        return false;
+      }
+      const fallbackId = getAddressIdValue(address);
+      return fallbackId !== undefined && fallbackId !== null;
+    });
+    if (!needsNormalization) {
+      return;
+    }
+    const normalizedAddresses = customerAddresses.map((address) => {
+      const directId = (address as any).addressId;
+      if (directId !== undefined && directId !== null) {
+        return address;
+      }
+      const fallbackId = getAddressIdValue(address);
+      if (fallbackId === undefined || fallbackId === null) {
+        return address;
+      }
+      return { ...address, addressId: fallbackId };
+    });
+    setCustomer({ ...customer, addresses: normalizedAddresses });
+  }, [customer, customerAddresses, setCustomer]);
+
+  const recipientOptions = useMemo(() => {
+    const map = new Map<
+      string,
+      { key: string; fullName: string; telephone: string }
+    >();
+    customerRecipients.forEach((recipient) => {
+      const fullName = recipient.fullName || '';
+      const telephone = recipient.telephone || '';
+      const key = getRecipientKey(fullName, telephone);
+      if (!key) {
+        return;
+      }
+      if (!map.has(key)) {
+        map.set(key, { key, fullName, telephone });
+      }
+    });
+    return Array.from(map.values());
+  }, [customerRecipients]);
   const pickupAddresses = useMemo(
     () =>
       customerAddresses.filter(
@@ -126,14 +399,14 @@ export function Shipment() {
   const selectedPickupAddress = useMemo(
     () =>
       pickupAddresses.find(
-        (address) => normalizeId(address.addressId) === selectedPickupAddressId
+        (address) => getAddressKey(address) === selectedPickupAddressId
       ),
     [pickupAddresses, selectedPickupAddressId]
   );
   const selectedCourierAddress = useMemo(
     () =>
       courierAddresses.find(
-        (address) => normalizeId(address.addressId) === selectedCourierAddressId
+        (address) => getAddressKey(address) === selectedCourierAddressId
       ),
     [courierAddresses, selectedCourierAddressId]
   );
@@ -148,12 +421,121 @@ export function Shipment() {
     setIsPanelOpen(false);
   };
 
+  const openRecipientPanel = () => {
+    setRecipientPanelStep('list');
+    setIsRecipientPanelOpen(true);
+  };
+
+  const closeRecipientPanel = () => {
+    setIsRecipientPanelOpen(false);
+  };
+
+  useEffect(() => {
+    const handler = () => {
+      openRecipientPanel();
+    };
+    window.addEventListener('checkout:open-recipient-panel', handler);
+    return () => {
+      window.removeEventListener('checkout:open-recipient-panel', handler);
+    };
+  }, []);
+
+  const primeRecipientDraft = (fullName?: string, telephone?: string) => {
+    form.setValue('recipient.full_name', fullName || '');
+    form.setValue('recipient.telephone', telephone || '');
+  };
+
   const handleDeliveryTypeChange = (type: DeliveryType) => {
     setDeliveryType(type);
     if (isPanelOpen) {
       setPanelType(type);
       setPanelStep('list');
     }
+  };
+
+  const applyRecipientSelection = async (
+    fullName?: string,
+    telephone?: string
+  ) => {
+    const name = (fullName || '').trim();
+    const phone = (telephone || '').trim();
+    if (!name || !phone) {
+      toast.error(_('Enter full name and telephone for the recipient'));
+      return;
+    }
+    setShippingAddressFields({
+      full_name: name,
+      telephone: phone
+    });
+    const key = getRecipientKey(name, phone);
+    if (key) {
+      setSelectedRecipientKey(key);
+    }
+    if (customer) {
+      try {
+        await ensureRecipient(name, phone);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : _('Failed to save recipient')
+        );
+        return;
+      }
+    }
+    closeRecipientPanel();
+  };
+
+  const ensureRecipient = async (
+    fullName: string,
+    telephone: string,
+    options?: { isDefault?: boolean }
+  ) => {
+    const key = getRecipientKey(fullName, telephone);
+    if (!customer || !key) {
+      return null;
+    }
+
+    const existing = customerRecipients.find(
+      (recipient) =>
+        getRecipientKey(recipient.fullName || '', recipient.telephone || '') === key
+    );
+    if (existing) {
+      return existing;
+    }
+
+    if (!addRecipientApi) {
+      return null;
+    }
+
+    const payload: Record<string, string | boolean> = {
+      full_name: fullName,
+      telephone
+    };
+    if (options?.isDefault) {
+      payload.is_default = true;
+    }
+
+    const response = await fetch(addRecipientApi, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(
+        json.error?.message || _('Failed to save recipient')
+      );
+    }
+    if (json.error) {
+      throw new Error(json.error.message || _('Failed to save recipient'));
+    }
+    const created = json.data || json;
+    if (created) {
+      setCustomer({
+        ...customer,
+        recipients: [...customerRecipients, created]
+      } as any);
+    }
+    return created as CustomerRecipient;
   };
 
   const cartWeight = cart?.totalWeight?.value
@@ -193,6 +575,97 @@ export function Shipment() {
     control: form.control,
     name: 'shippingAddress'
   });
+  const watchedRecipient = useWatch({
+    control: form.control,
+    name: 'recipient'
+  });
+
+  useEffect(() => {
+    if (selectedRecipientKey) {
+      return;
+    }
+    if (
+      watchedShippingAddress?.full_name ||
+      watchedShippingAddress?.telephone
+    ) {
+      const key = getRecipientKey(
+        watchedShippingAddress?.full_name,
+        watchedShippingAddress?.telephone
+      );
+      if (key) {
+        setSelectedRecipientKey(key);
+      }
+      return;
+    }
+    const fallbackRecipient =
+      customer && (customer.fullName || customerPhone)
+        ? {
+            fullName: customer.fullName,
+            telephone: customerPhone,
+            isDefault: true
+          }
+        : null;
+    const defaultRecipient =
+      customerRecipients.find((recipient) => recipient.isDefault) ||
+      customerRecipients[0] ||
+      fallbackRecipient;
+    const initialFullName =
+      watchedShippingAddress?.full_name ||
+      shippingAddress?.fullName ||
+      defaultRecipient?.fullName ||
+      customer?.fullName ||
+      '';
+    const initialTelephone =
+      watchedShippingAddress?.telephone ||
+      shippingAddress?.telephone ||
+      defaultRecipient?.telephone ||
+      customerPhone ||
+      '';
+    if (!initialFullName && !initialTelephone) {
+      return;
+    }
+    setShippingAddressFields({
+      full_name: initialFullName,
+      telephone: initialTelephone
+    });
+    const initialKey = getRecipientKey(initialFullName, initialTelephone);
+    if (initialKey) {
+      setSelectedRecipientKey(initialKey);
+    }
+  }, [
+    customer,
+    customerPhone,
+    customerRecipients,
+    selectedRecipientKey,
+    shippingAddress?.fullName,
+    shippingAddress?.telephone,
+    watchedShippingAddress?.full_name,
+    watchedShippingAddress?.telephone
+  ]);
+
+  useEffect(() => {
+    if (!customer) {
+      return;
+    }
+    if (defaultRecipientCreatedRef.current) {
+      return;
+    }
+    if (customerRecipients.length > 0) {
+      return;
+    }
+    if (!addRecipientApi) {
+      return;
+    }
+    const name = (customer.fullName || '').trim();
+    const phone = (customerPhone || '').trim();
+    if (!name || !phone) {
+      return;
+    }
+    defaultRecipientCreatedRef.current = true;
+    ensureRecipient(name, phone, { isDefault: true }).catch(() => {
+      defaultRecipientCreatedRef.current = false;
+    });
+  }, [addRecipientApi, customer, customerPhone, customerRecipients.length]);
 
   const dirtyFields = form.formState.dirtyFields;
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -209,6 +682,7 @@ export function Shipment() {
         }
       : null
   );
+  const clearingShippingRef = useRef(false);
 
   useEffect(() => {
     const fetchShippingMethods = async () => {
@@ -264,7 +738,10 @@ export function Shipment() {
     if (!selectedPickupAddressId && pickupAddresses.length > 0) {
       const defaultPickup =
         pickupAddresses.find((address) => address.isDefault) || pickupAddresses[0];
-      setSelectedPickupAddressId(normalizeId(defaultPickup.addressId));
+      const defaultId = getAddressKey(defaultPickup);
+      if (defaultId) {
+        setSelectedPickupAddressId(defaultId);
+      }
     }
   }, [pickupAddresses, selectedPickupAddressId]);
 
@@ -272,7 +749,10 @@ export function Shipment() {
     if (!selectedCourierAddressId && courierAddresses.length > 0) {
       const defaultCourier =
         courierAddresses.find((address) => address.isDefault) || courierAddresses[0];
-      setSelectedCourierAddressId(normalizeId(defaultCourier.addressId));
+      const defaultId = getAddressKey(defaultCourier);
+      if (defaultId) {
+        setSelectedCourierAddressId(defaultId);
+      }
     }
   }, [courierAddresses, selectedCourierAddressId]);
 
@@ -280,41 +760,54 @@ export function Shipment() {
     deliveryType === 'pickup'
       ? selectedPickupAddress || shippingAddress
       : selectedCourierAddress || shippingAddress;
+  const pickupSummaryData =
+    deliveryType === 'pickup' ? getPickupMetaFromAddress(summaryAddress as any) : null;
 
-  const summaryLines = useMemo(() => {
+  const deliverySummaryLines = useMemo(() => {
     if (!summaryAddress) {
-      return [_('No recipient selected yet')];
+      return [];
     }
 
-    const lines: string[] = [];
-    const fullName = summaryAddress.fullName || summaryAddress.full_name || '';
-    const telephone = summaryAddress.telephone || '';
-    const nameLine = [fullName, telephone].filter(Boolean).join(' / ');
-    if (nameLine) {
-      lines.push(nameLine);
-    }
+    const pickupData =
+      deliveryType === 'pickup'
+        ? (pickupSummaryData?.pickup_data as Record<string, string> | null)
+        : null;
 
-    const address1 = summaryAddress.address1 || summaryAddress.address_1 || '';
-    const address2 = summaryAddress.address2 || summaryAddress.address_2 || '';
-    const addressLine = [address1, address2].filter(Boolean).join(', ');
-    if (addressLine) {
-      lines.push(addressLine);
-    }
-
+    const address1 =
+      pickupData?.address || summaryAddress.address1 || summaryAddress.address_1 || '';
+    const address2 =
+      pickupData?.name || summaryAddress.address2 || summaryAddress.address_2 || '';
+    const city = pickupData?.city || summaryAddress.city || '';
     const province =
+      pickupData?.region ||
       summaryAddress.province?.code ||
       summaryAddress.province?.name ||
       summaryAddress.province ||
       '';
-    const city = summaryAddress.city || '';
-    const postcode = summaryAddress.postcode || '';
-    const locationLine = [city, province, postcode].filter(Boolean).join(', ');
-    if (locationLine) {
-      lines.push(locationLine);
+    const postcode = pickupData?.postal_code || summaryAddress.postcode || '';
+
+    const locationParts: string[] = [];
+    if (province && province !== city) {
+      locationParts.push(province);
+    }
+    if (city) {
+      locationParts.push(city);
+    }
+    const locationLine = locationParts.join(', ');
+
+    const detailParts = [locationLine, address1, postcode].filter(Boolean);
+    const detailLine = detailParts.join(', ');
+
+    const lines: string[] = [];
+    if (address2) {
+      lines.push(address2);
+    }
+    if (detailLine) {
+      lines.push(detailLine);
     }
 
-    return lines.length > 0 ? lines : [_('No recipient selected yet')];
-  }, [summaryAddress]);
+    return lines.length > 0 ? lines : [];
+  }, [deliveryType, pickupSummaryData, summaryAddress]);
 
   const updateShipment = async (
     method: { code: string; name: string },
@@ -329,6 +822,10 @@ export function Shipment() {
         ...form.getValues('shippingAddress'),
         ...(extraAddressData || {})
       };
+      if (!updatedShippingAddress.full_name || !updatedShippingAddress.telephone) {
+        toast.error(_('Enter full name and telephone for the recipient'));
+        return false;
+      }
 
       await addShippingAddress(updatedShippingAddress);
       await addShippingMethod(method.code, method.name);
@@ -345,27 +842,79 @@ export function Shipment() {
     }
   };
 
-  const setShippingAddressFields = (addressData: Record<string, string>) => {
-    Object.entries(addressData).forEach(([key, value]) => {
+  const setShippingAddressFields = (
+    addressData: Record<string, string>,
+    options?: { preserveRecipient?: boolean }
+  ) => {
+    const payload = { ...addressData };
+    if (options?.preserveRecipient) {
+      const currentName = form.getValues('shippingAddress.full_name');
+      const currentPhone = form.getValues('shippingAddress.telephone');
+      if (currentName) {
+        delete payload.full_name;
+      }
+      if (currentPhone) {
+        delete payload.telephone;
+      }
+    }
+    Object.entries(payload).forEach(([key, value]) => {
       form.setValue(`shippingAddress.${key}`, value || '');
     });
   };
 
+  const clearDeliveryAddressFields = () => {
+    setShippingAddressFields(
+      {
+        address_1: '',
+        address_2: '',
+        city: '',
+        province: '',
+        country: '',
+        postcode: ''
+      },
+      { preserveRecipient: true }
+    );
+  };
+
+  const clearShippingSelection = async () => {
+    if (!cart?.uuid) {
+      return;
+    }
+
+    try {
+      await fetch(`/api/carts/${cart.uuid}/clearShipping`, { method: 'POST' });
+      updateCheckoutData({ shippingAddress: null, shippingMethod: null });
+      clearDeliveryAddressFields();
+      setSelectedPickupAddressId('');
+      setSelectedCourierAddressId('');
+      setSelectedPointId(undefined);
+      await syncCartWithServer('clearShipping');
+    } catch (error) {
+      console.error('[Shipment] Failed to clear shipping selection:', error);
+    }
+  };
+
   const handleCourierSelect = async (address: ExtendedCustomerAddress) => {
-    setSelectedCourierAddressId(normalizeId(address.addressId));
+    setSelectedCourierAddressId(getAddressKey(address));
     const addressData = mapCustomerAddressToForm(address);
-    setShippingAddressFields(addressData);
-    await updateShipment(courierMethod);
+    setShippingAddressFields(addressData, { preserveRecipient: true });
+    const updated = await updateShipment(courierMethod);
+    if (updated) {
+      closePanel();
+    }
   };
 
   const handlePickupSelect = async (address: ExtendedCustomerAddress) => {
-    setSelectedPickupAddressId(normalizeId(address.addressId));
+    setSelectedPickupAddressId(getAddressKey(address));
     const addressData = mapCustomerAddressToForm(address);
-    setShippingAddressFields(addressData);
-    await updateShipment(pickupMethod, getPickupMetaFromAddress(address));
+    setShippingAddressFields(addressData, { preserveRecipient: true });
+    const updated = await updateShipment(pickupMethod, getPickupMetaFromAddress(address));
+    if (updated) {
+      closePanel();
+    }
   };
 
-  const saveCourierRecipient = async () => {
+  const saveCourierAddress = async () => {
     if (!customer) {
       toast.error(_('Please sign in to save recipients'));
       return;
@@ -376,15 +925,28 @@ export function Shipment() {
       return;
     }
     const addressData = form.getValues('shippingAddress');
+    if (!addressData.full_name || !addressData.telephone) {
+      toast.error(_('Enter full name and telephone for the recipient'));
+      return;
+    }
     try {
-      await addAddress({
+      const created = await addAddress({
         ...addressData,
         delivery_type: 'courier'
       });
-      toast.success(_('Recipient saved'));
+      if (created) {
+        const createdKey = normalizeId(created.uuid || created.addressId);
+        if (createdKey) {
+          setSelectedCourierAddressId(createdKey);
+        }
+      }
+      const updated = await updateShipment(courierMethod);
+      if (updated) {
+        closePanel();
+      }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : _('Failed to save recipient')
+        error instanceof Error ? error.message : _('Failed to save address')
       );
     }
   };
@@ -453,18 +1015,14 @@ export function Shipment() {
       };
 
       try {
-        if (selectedPickupAddressId) {
-          await updateAddress(selectedPickupAddressId, {
-            ...pickupAddressData,
-            ...pickupData
-          });
-        } else {
-          const created = await addAddress({
-            ...pickupAddressData,
-            ...pickupData
-          });
-          if (created?.addressId) {
-            setSelectedPickupAddressId(normalizeId(created.addressId));
+        const created = await addAddress({
+          ...pickupAddressData,
+          ...pickupData
+        });
+        if (created) {
+          const createdKey = normalizeId(created.uuid || created.addressId);
+          if (createdKey) {
+            setSelectedPickupAddressId(createdKey);
           }
         }
       } catch (error) {
@@ -477,32 +1035,113 @@ export function Shipment() {
     }
   };
 
+  const hasAnyRecipient = pickupAddresses.length > 0 || courierAddresses.length > 0;
+
+  useEffect(() => {
+    if (!customer) {
+      return;
+    }
+    if (hasAnyRecipient) {
+      return;
+    }
+    if (!cart?.shippingMethod && !cart?.shippingAddress) {
+      return;
+    }
+    if (clearingShippingRef.current) {
+      return;
+    }
+
+    clearingShippingRef.current = true;
+    clearShippingSelection().finally(() => {
+      clearingShippingRef.current = false;
+    });
+  }, [
+    customer,
+    hasAnyRecipient,
+    cart?.shippingMethod,
+    cart?.shippingAddress,
+    cart?.uuid
+  ]);
+
   return (
-    <div className="checkout-shipment">
-      <h2>{_('Delivery')}</h2>
+    <div className="checkout-delivery">
+      <h3>{_('Delivery')}</h3>
 
-      <div className="rounded-lg border bg-white p-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="text-lg font-medium">{_('Delivery method')}</div>
+      <div
+        className={`rounded-lg bg-white ${
+          deliverySummaryLines.length > 0 ? 'border p-4' : ''
+        }`}
+      >
+        {deliverySummaryLines.length > 0 ? (
+          <div className="flex items-center gap-3">
+            <div className="text-gray-500">
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 10a3 3 0 100-6 3 3 0 000 6z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 21s-6-5.686-6-10a6 6 0 1112 0c0 4.314-6 10-6 10z"
+                />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0 space-y-1 text-xs text-gray-600">
+              {deliverySummaryLines.map((line, index) => (
+                <div
+                  key={line}
+                  className={
+                    index === 0
+                      ? 'text-sm font-medium text-gray-900'
+                      : undefined
+                  }
+                >
+                  {line}
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="text-gray-400 hover:text-gray-700"
+              onClick={() => openPanel(deliveryType)}
+              aria-label={_('Change')}
+            >
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 20h4l10-10-4-4L4 16v4zM13 6l4 4"
+                />
+              </svg>
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="checkout-button-section">
+            <button
+              type="button"
+              className="w-full bg-gray-900 text-white py-3 px-4 rounded-lg font-medium hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => openPanel(deliveryType)}
+            >
+              {_('Choose delivery address')}
+            </button>
+          </div>
+        )}
 
-        <div className="mt-4 space-y-1 text-sm text-gray-700">
-          {summaryLines.map((line) => (
-            <div key={line}>{line}</div>
-          ))}
-        </div>
-
-        <div className="mt-4 flex justify-end">
-          <button
-            type="button"
-            className="text-sm text-blue-600 underline"
-            onClick={() => openPanel(deliveryType)}
-          >
-            {_('Change')}
-          </button>
-        </div>
       </div>
 
       {isPanelOpen && (
@@ -518,7 +1157,7 @@ export function Shipment() {
             <div
               className={
                 panelStep === 'list'
-                  ? 'w-full max-w-md bg-white rounded-2xl shadow-xl flex flex-col'
+                  ? 'w-full max-w-md max-h-[90vh] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden'
                   : 'w-full h-full bg-white shadow-xl flex flex-col'
               }
             >
@@ -565,33 +1204,86 @@ export function Shipment() {
                 <div className="space-y-6">
                   {panelType === 'pickup' ? (
                     <div className="space-y-4">
+                      <button
+                        type="button"
+                        className="text-sm text-blue-600"
+                        onClick={() => {
+                          setSelectedPickupAddressId('');
+                          setSelectedPointId(undefined);
+                          setPanelStep('detail');
+                        }}
+                      >
+                        + {_('Add pickup point')}
+                      </button>
                       {pickupAddresses.length > 0 ? (
                         <div className="grid grid-cols-1 gap-4">
                           {pickupAddresses.map((address) => {
+                            const addressId = getAddressKey(address);
                             const isSelected =
-                              normalizeId(address.addressId) === selectedPickupAddressId;
+                              addressId !== '' && addressId === selectedPickupAddressId;
                             return (
                               <div
                                 key={address.uuid}
-                                className={`border rounded p-4 ${
-                                  isSelected ? 'border-gray-900' : 'border-gray-200'
+                                className={`border rounded p-4 cursor-pointer transition relative ${
+                                  isSelected
+                                    ? 'border-gray-900 bg-gray-50'
+                                    : 'border-gray-200 hover:border-gray-400'
                                 }`}
+                                onClick={() => {
+                                  if (addressId) {
+                                    setSelectedPickupAddressId(addressId);
+                                  }
+                                }}
                               >
-                                <AddressSummary address={address} />
-                                <div className="mt-3 flex gap-3">
+                                <div className="relative pr-10">
                                   <button
                                     type="button"
-                                    className="text-sm text-white bg-gray-900 px-3 py-1 rounded"
-                                    onClick={() => handlePickupSelect(address)}
-                                  >
-                                    {_('Use')}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="text-sm text-gray-600"
-                                    onClick={async () => {
+                                    className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
                                       try {
-                                        await deleteAddress(address.addressId);
+                                        const addressId = resolveAddressId(
+                                          address,
+                                          customerAddresses
+                                        );
+                                        if (addressId) {
+                                          await deleteAddress(addressId);
+                                        } else if (address.deleteApi && customer) {
+                                          const response = await fetch(
+                                            address.deleteApi,
+                                            {
+                                              method: 'DELETE',
+                                              headers: {
+                                                'Content-Type': 'application/json'
+                                              }
+                                            }
+                                          );
+                                          const json = await response.json();
+                                          if (!response.ok) {
+                                            throw new Error(
+                                              json.error?.message ||
+                                                _('Failed to delete recipient')
+                                            );
+                                          }
+                                          if (json.error) {
+                                            throw new Error(
+                                              json.error.message ||
+                                                _('Failed to delete recipient')
+                                            );
+                                          }
+                                          setCustomer({
+                                            ...customer,
+                                            addresses: customerAddresses.filter(
+                                              (item) => item.uuid !== address.uuid
+                                            )
+                                          });
+                                        } else {
+                                          toast.error(_('Recipient id missing'));
+                                          return;
+                                        }
+                                        if (getAddressKey(address) === selectedPickupAddressId) {
+                                          setSelectedPickupAddressId('');
+                                        }
                                         toast.success(_('Recipient deleted'));
                                       } catch (error) {
                                         toast.error(
@@ -601,10 +1293,52 @@ export function Shipment() {
                                         );
                                       }
                                     }}
+                                    aria-label={_('Delete')}
+                                    title={_('Delete')}
                                   >
-                                    {_('Delete')}
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className="h-4 w-4"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <path d="M3 6h18" />
+                                      <path d="M8 6V4h8v2" />
+                                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                      <path d="M10 11v6M14 11v6" />
+                                    </svg>
                                   </button>
+                                  <div className="space-y-1 text-xs text-gray-600">
+                                    {getPickupSummaryLines(address).map(
+                                      (line, index) => (
+                                        <div
+                                          key={line}
+                                          className={
+                                            index === 0
+                                              ? 'text-sm font-medium text-gray-900'
+                                              : undefined
+                                          }
+                                        >
+                                          {line}
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
                                 </div>
+                                {isSelected ? (
+                                  <div className="mt-4">
+                                    <button
+                                      type="button"
+                                      className="w-full rounded-lg bg-gray-900 py-2 text-sm text-white"
+                                      onClick={() => handlePickupSelect(address)}
+                                    >
+                                      {_('Pick up here')}
+                                    </button>
+                                  </div>
+                                ) : null}
                               </div>
                             );
                           })}
@@ -614,43 +1348,85 @@ export function Shipment() {
                           {_('No pickup recipients yet')}
                         </div>
                       )}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
                       <button
                         type="button"
                         className="text-sm text-blue-600"
                         onClick={() => setPanelStep('detail')}
                       >
-                        + {_('Add pickup point')}
+                        + {_('Add address')}
                       </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
                       {courierAddresses.length > 0 ? (
                         <div className="grid grid-cols-1 gap-4">
                           {courierAddresses.map((address) => {
+                            const addressId = getAddressKey(address);
                             const isSelected =
-                              normalizeId(address.addressId) === selectedCourierAddressId;
+                              addressId !== '' && addressId === selectedCourierAddressId;
                             return (
                               <div
                                 key={address.uuid}
-                                className={`border rounded p-4 ${
-                                  isSelected ? 'border-gray-900' : 'border-gray-200'
+                                className={`border rounded p-4 cursor-pointer transition relative ${
+                                  isSelected
+                                    ? 'border-gray-900 bg-gray-50'
+                                    : 'border-gray-200 hover:border-gray-400'
                                 }`}
+                                onClick={() => {
+                                  if (addressId) {
+                                    setSelectedCourierAddressId(addressId);
+                                  }
+                                }}
                               >
-                                <AddressSummary address={address} />
-                                <div className="mt-3 flex gap-3">
+                                <div className="relative pr-10">
                                   <button
                                     type="button"
-                                    className="text-sm text-white bg-gray-900 px-3 py-1 rounded"
-                                    onClick={() => handleCourierSelect(address)}
-                                  >
-                                    {_('Use')}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="text-sm text-gray-600"
-                                    onClick={async () => {
+                                    className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
                                       try {
-                                        await deleteAddress(address.addressId);
+                                        const addressId = resolveAddressId(
+                                          address,
+                                          customerAddresses
+                                        );
+                                        if (addressId) {
+                                          await deleteAddress(addressId);
+                                        } else if (address.deleteApi && customer) {
+                                          const response = await fetch(
+                                            address.deleteApi,
+                                            {
+                                              method: 'DELETE',
+                                              headers: {
+                                                'Content-Type': 'application/json'
+                                              }
+                                            }
+                                          );
+                                          const json = await response.json();
+                                          if (!response.ok) {
+                                            throw new Error(
+                                              json.error?.message ||
+                                                _('Failed to delete recipient')
+                                            );
+                                          }
+                                          if (json.error) {
+                                            throw new Error(
+                                              json.error.message ||
+                                                _('Failed to delete recipient')
+                                            );
+                                          }
+                                          setCustomer({
+                                            ...customer,
+                                            addresses: customerAddresses.filter(
+                                              (item) => item.uuid !== address.uuid
+                                            )
+                                          });
+                                        } else {
+                                          toast.error(_('Recipient id missing'));
+                                          return;
+                                        }
+                                        if (getAddressKey(address) === selectedCourierAddressId) {
+                                          setSelectedCourierAddressId('');
+                                        }
                                         toast.success(_('Recipient deleted'));
                                       } catch (error) {
                                         toast.error(
@@ -660,10 +1436,37 @@ export function Shipment() {
                                         );
                                       }
                                     }}
+                                    aria-label={_('Delete')}
+                                    title={_('Delete')}
                                   >
-                                    {_('Delete')}
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className="h-4 w-4"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <path d="M3 6h18" />
+                                      <path d="M8 6V4h8v2" />
+                                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                      <path d="M10 11v6M14 11v6" />
+                                    </svg>
                                   </button>
+                                  <DeliveryAddressSummary address={address} />
                                 </div>
+                                {isSelected ? (
+                                  <div className="mt-4">
+                                    <button
+                                      type="button"
+                                      className="w-full rounded-lg bg-gray-900 py-2 text-sm text-white"
+                                      onClick={() => handleCourierSelect(address)}
+                                    >
+                                      {_('Deliver here')}
+                                    </button>
+                                  </div>
+                                ) : null}
                               </div>
                             );
                           })}
@@ -673,37 +1476,9 @@ export function Shipment() {
                           {_('No courier recipients yet')}
                         </div>
                       )}
-                      <button
-                        type="button"
-                        className="text-sm text-blue-600"
-                        onClick={() => setPanelStep('detail')}
-                      >
-                        + {_('Add address')}
-                      </button>
                     </div>
                   )}
 
-                  <button
-                    type="button"
-                    className="w-full rounded-xl bg-gray-900 py-3 text-white text-sm font-medium"
-                    onClick={async () => {
-                      if (panelType === 'pickup' && selectedPickupAddress) {
-                        await handlePickupSelect(selectedPickupAddress);
-                        closePanel();
-                        return;
-                      }
-                      if (panelType === 'courier' && selectedCourierAddress) {
-                        await handleCourierSelect(selectedCourierAddress);
-                        closePanel();
-                        return;
-                      }
-                      setPanelStep('detail');
-                    }}
-                  >
-                    {panelType === 'pickup'
-                      ? _('Pick up here')
-                      : _('Deliver here')}
-                  </button>
                 </div>
               ) : panelType === 'pickup' ? (
                 <div className="space-y-6">
@@ -714,17 +1489,6 @@ export function Shipment() {
                   >
                     {_('Back')}
                   </button>
-
-                  <div>
-                    <h3 className="text-base font-medium mb-3">
-                      {_('Recipient')}
-                    </h3>
-                    <NameAndTelephone
-                      fullName={shippingAddress?.fullName || ''}
-                      telephone={shippingAddress?.telephone || ''}
-                      getFieldName={(field) => `shippingAddress.${field}`}
-                    />
-                  </div>
 
                   <DeliveryMapPicker
                     onPointSelect={handlePointSelect}
@@ -748,8 +1512,7 @@ export function Shipment() {
 
                   <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
                     <div className="space-y-6">
-                      <CustomerAddressForm
-                        areaId="checkoutShippingAddressForm"
+                      <AddressOnlyForm
                         fieldNamePrefix="shippingAddress"
                         address={shippingAddress}
                       />
@@ -757,18 +1520,10 @@ export function Shipment() {
                         <button
                           type="button"
                           className="px-4 py-2 border border-gray-300 rounded"
-                          onClick={() => updateShipment(courierMethod)}
+                          onClick={saveCourierAddress}
                           disabled={fetchingShippingMethods}
                         >
                           {_('Use this address')}
-                        </button>
-                        <button
-                          type="button"
-                          className="px-4 py-2 bg-gray-900 text-white rounded"
-                          onClick={saveCourierRecipient}
-                          disabled={fetchingShippingMethods}
-                        >
-                          {_('Save recipient')}
                         </button>
                       </div>
                     </div>
@@ -783,6 +1538,190 @@ export function Shipment() {
           </div>
         </div>
       </div>
+      )}
+
+      {isRecipientPanelOpen && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={closeRecipientPanel} />
+          <div className="relative z-10 flex h-full w-full items-center justify-center p-4">
+            <div className="w-full max-w-md bg-white rounded-2xl shadow-xl flex flex-col max-h-[90vh]">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <div className="text-lg font-medium">{_('Recipient')}</div>
+                <button
+                  type="button"
+                  className="text-gray-500 hover:text-gray-800"
+                  onClick={closeRecipientPanel}
+                >
+                  x
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                {recipientPanelStep === 'list' ? (
+                  <div className="space-y-4">
+                    <button
+                      type="button"
+                      className="text-sm text-blue-600"
+                      onClick={() => {
+                        primeRecipientDraft(
+                          watchedShippingAddress?.full_name ||
+                            shippingAddress?.fullName ||
+                            customer?.fullName ||
+                            '',
+                          watchedShippingAddress?.telephone ||
+                            shippingAddress?.telephone ||
+                            customerPhone ||
+                            ''
+                        );
+                        setRecipientPanelStep('add');
+                      }}
+                    >
+                      + {_('Add recipient')}
+                    </button>
+
+                    {recipientOptions.length > 0 ? (
+                      <div className="grid grid-cols-1 gap-4">
+                        {recipientOptions.map((recipient) => {
+                          const isSelected = recipient.key === selectedRecipientKey;
+                          const rawRecipient = customerRecipients.find(
+                            (item) =>
+                              getRecipientKey(
+                                item.fullName || '',
+                                item.telephone || ''
+                              ) === recipient.key
+                          );
+                          const canDelete = !rawRecipient?.isDefault;
+                          return (
+                            <div
+                              key={recipient.key}
+                              className={`border rounded p-4 cursor-pointer transition ${
+                                isSelected
+                                  ? 'border-gray-900 bg-gray-50'
+                                  : 'border-gray-200 hover:border-gray-400'
+                              }`}
+                              onClick={() => {
+                                void applyRecipientSelection(
+                                  recipient.fullName,
+                                  recipient.telephone
+                                );
+                              }}
+                            >
+                              <div className="relative pr-10">
+                                {canDelete ? (
+                                  <button
+                                    type="button"
+                                    className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
+                                      if (!rawRecipient?.deleteApi || !customer) {
+                                        toast.error(_('Delete recipient is not available'));
+                                        return;
+                                      }
+                                      try {
+                                        const response = await fetch(
+                                          rawRecipient.deleteApi,
+                                          { method: 'DELETE' }
+                                        );
+                                        const json = await response.json();
+                                        if (!response.ok) {
+                                          throw new Error(
+                                            json.error?.message ||
+                                              _('Failed to delete recipient')
+                                          );
+                                        }
+                                        if (json.error) {
+                                          throw new Error(
+                                            json.error.message ||
+                                              _('Failed to delete recipient')
+                                          );
+                                        }
+                                        setCustomer({
+                                          ...customer,
+                                          recipients: customerRecipients.filter(
+                                            (item) => item.uuid !== rawRecipient.uuid
+                                          )
+                                        } as any);
+                                        if (selectedRecipientKey === recipient.key) {
+                                          setSelectedRecipientKey('');
+                                        }
+                                        toast.success(_('Recipient deleted'));
+                                      } catch (error) {
+                                        toast.error(
+                                          error instanceof Error
+                                            ? error.message
+                                            : _('Failed to delete recipient')
+                                        );
+                                      }
+                                    }}
+                                    aria-label={_('Delete')}
+                                    title={_('Delete')}
+                                  >
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className="h-4 w-4"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <path d="M3 6h18" />
+                                      <path d="M8 6V4h8v2" />
+                                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                      <path d="M10 11v6M14 11v6" />
+                                    </svg>
+                                  </button>
+                                ) : null}
+                                <div className="text-sm font-medium">
+                                  {recipient.fullName || _('Unnamed recipient')}
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {recipient.telephone || ''}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">
+                        {_('No recipients yet')}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <button
+                      type="button"
+                      className="text-sm text-gray-500"
+                      onClick={() => setRecipientPanelStep('list')}
+                    >
+                      {_('Back')}
+                    </button>
+
+                    <NameAndTelephone
+                      fullName={watchedRecipient?.full_name || ''}
+                      telephone={watchedRecipient?.telephone || ''}
+                      getFieldName={(field) => `recipient.${field}`}
+                    />
+
+                    <button
+                      type="button"
+                      className="w-full rounded-lg bg-gray-900 py-2 text-sm text-white"
+                      onClick={() => {
+                        void applyRecipientSelection(
+                          form.getValues('recipient.full_name'),
+                          form.getValues('recipient.telephone')
+                        );
+                      }}
+                    >
+                      {_('Select recipient')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

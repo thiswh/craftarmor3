@@ -5,3 +5,19 @@ extend type CustomerAddress {
   pickupExternalId: String
   pickupData: JSON
 }
+
+type CustomerRecipient {
+  recipientId: Int!
+  uuid: String!
+  fullName: String
+  telephone: String
+  isDefault: Boolean
+  updateApi: String!
+  deleteApi: String!
+}
+
+extend type Customer {
+  phone: String
+  recipients: [CustomerRecipient]
+  addRecipientApi: String!
+}

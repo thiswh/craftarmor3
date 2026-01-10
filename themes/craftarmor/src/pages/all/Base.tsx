@@ -98,12 +98,14 @@ export const query = `
       uuid
       email
       fullName
+      phone
       groupId
       createdAt {
         value
         text
       }
       addAddressApi
+      addRecipientApi
       addresses {
         addressId
         uuid
@@ -127,6 +129,15 @@ export const query = `
         pickupServiceCode
         pickupExternalId
         pickupData
+        updateApi
+        deleteApi
+      }
+      recipients {
+        recipientId
+        uuid
+        fullName
+        telephone
+        isDefault
         updateApi
         deleteApi
       }

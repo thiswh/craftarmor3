@@ -1,0 +1,5 @@
+{
+  "methods": ["PATCH"],
+  "path": "/customers/:customer_id/recipients/:recipient_id",
+  "access": "public"
+}
