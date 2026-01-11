@@ -299,6 +299,7 @@ export function Shipment() {
   const [selectedCourierAddressId, setSelectedCourierAddressId] = useState<string>('');
   const [selectedRecipientKey, setSelectedRecipientKey] = useState<string>('');
   const defaultRecipientCreatedRef = useRef(false);
+  const bodyOverflowRef = useRef<string | null>(null);
 
   const { data: cart, loadingStates } = useCartState();
   const {
@@ -309,7 +310,7 @@ export function Shipment() {
   } = useCartDispatch();
   const { form } = useCheckout();
   const { updateCheckoutData } = useCheckoutDispatch();
-  const { customer } = useCustomer();
+  const { customer, isLoading: isCustomerLoading } = useCustomer();
   const { addAddress, deleteAddress, setCustomer } = useCustomerDispatch();
 
   const shippingAddress = cart?.shippingAddress;
@@ -667,6 +668,23 @@ export function Shipment() {
     });
   }, [addRecipientApi, customer, customerPhone, customerRecipients.length]);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const shouldLock =
+      isPanelOpen && panelStep === 'detail' && panelType === 'pickup';
+    if (shouldLock) {
+      if (bodyOverflowRef.current === null) {
+        bodyOverflowRef.current = document.body.style.overflow || '';
+      }
+      document.body.style.overflow = 'hidden';
+    } else if (bodyOverflowRef.current !== null) {
+      document.body.style.overflow = bodyOverflowRef.current;
+      bodyOverflowRef.current = null;
+    }
+  }, [isPanelOpen, panelStep, panelType]);
+
   const dirtyFields = form.formState.dirtyFields;
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastFetchParamsRef = useRef<{
@@ -828,6 +846,7 @@ export function Shipment() {
       }
 
       await addShippingAddress(updatedShippingAddress);
+      updateCheckoutData({ shippingAddress: updatedShippingAddress });
       await addShippingMethod(method.code, method.name);
       updateCheckoutData({
         shippingAddress: updatedShippingAddress,
@@ -882,7 +901,12 @@ export function Shipment() {
     }
 
     try {
-      await fetch(`/api/carts/${cart.uuid}/clearShipping`, { method: 'POST' });
+      const response = await fetch(`/api/carts/${cart.uuid}/clearShipping`, {
+        method: 'POST'
+      });
+      if (!response.ok) {
+        throw new Error('Failed to clear shipping');
+      }
       updateCheckoutData({ shippingAddress: null, shippingMethod: null });
       clearDeliveryAddressFields();
       setSelectedPickupAddressId('');
@@ -891,25 +915,36 @@ export function Shipment() {
       await syncCartWithServer('clearShipping');
     } catch (error) {
       console.error('[Shipment] Failed to clear shipping selection:', error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : _('Failed to clear shipping selection')
+      );
     }
   };
 
-  const handleCourierSelect = async (address: ExtendedCustomerAddress) => {
+  const handleCourierSelect = async (
+    address: ExtendedCustomerAddress,
+    options?: { closePanel?: boolean }
+  ) => {
     setSelectedCourierAddressId(getAddressKey(address));
     const addressData = mapCustomerAddressToForm(address);
     setShippingAddressFields(addressData, { preserveRecipient: true });
     const updated = await updateShipment(courierMethod);
-    if (updated) {
+    if (updated && options?.closePanel !== false) {
       closePanel();
     }
   };
 
-  const handlePickupSelect = async (address: ExtendedCustomerAddress) => {
+  const handlePickupSelect = async (
+    address: ExtendedCustomerAddress,
+    options?: { closePanel?: boolean }
+  ) => {
     setSelectedPickupAddressId(getAddressKey(address));
     const addressData = mapCustomerAddressToForm(address);
     setShippingAddressFields(addressData, { preserveRecipient: true });
     const updated = await updateShipment(pickupMethod, getPickupMetaFromAddress(address));
-    if (updated) {
+    if (updated && options?.closePanel !== false) {
       closePanel();
     }
   };
@@ -994,7 +1029,10 @@ export function Shipment() {
     };
 
     setShippingAddressFields(pickupAddressData);
-    await updateShipment(pickupMethod, pickupMeta);
+    const updated = await updateShipment(pickupMethod, pickupMeta);
+    if (updated) {
+      closePanel();
+    }
 
     if (customer) {
       const pickupData = {
@@ -1036,9 +1074,10 @@ export function Shipment() {
   };
 
   const hasAnyRecipient = pickupAddresses.length > 0 || courierAddresses.length > 0;
+  const addressesLoaded = Boolean(customer) && !isCustomerLoading;
 
   useEffect(() => {
-    if (!customer) {
+    if (!addressesLoaded) {
       return;
     }
     if (hasAnyRecipient) {
@@ -1056,7 +1095,7 @@ export function Shipment() {
       clearingShippingRef.current = false;
     });
   }, [
-    customer,
+    addressesLoaded,
     hasAnyRecipient,
     cart?.shippingMethod,
     cart?.shippingAddress,
@@ -1162,8 +1201,32 @@ export function Shipment() {
               }
             >
             <div className="flex items-center justify-between border-b px-4 py-3">
-              <div className="text-lg font-medium">
-                {_('Delivery method')}
+              <div className="flex items-center gap-2">
+                {panelStep !== 'list' ? (
+                  <button
+                    type="button"
+                    className="text-gray-500 hover:text-gray-800"
+                    onClick={() => setPanelStep('list')}
+                    aria-label={_('Back')}
+                  >
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 19l-7-7 7-7"
+                      />
+                    </svg>
+                  </button>
+                ) : null}
+                <div className="text-lg font-medium">
+                  {_('Delivery method')}
+                </div>
               </div>
               <button
                 type="button"
@@ -1173,7 +1236,13 @@ export function Shipment() {
                 x
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4">
+            <div
+              className={`flex-1 ${
+                panelStep === 'detail' && panelType === 'pickup'
+                  ? 'overflow-hidden p-0'
+                  : 'overflow-y-auto p-4'
+              }`}
+            >
               {panelStep === 'list' && (
                 <div className="inline-flex items-center rounded-full border bg-gray-50 p-1 mb-6">
                   <button
@@ -1246,6 +1315,21 @@ export function Shipment() {
                                           address,
                                           customerAddresses
                                         );
+                                        const targetKey = getAddressKey(address);
+                                        const updatedAddresses = customerAddresses.filter(
+                                          (item) => {
+                                            if (targetKey) {
+                                              return getAddressKey(item) !== targetKey;
+                                            }
+                                            if (address.uuid) {
+                                              return item.uuid !== address.uuid;
+                                            }
+                                            const targetId = getAddressIdValue(address);
+                                            return targetId
+                                              ? getAddressIdValue(item) !== targetId
+                                              : true;
+                                          }
+                                        );
                                         if (addressId) {
                                           await deleteAddress(addressId);
                                         } else if (address.deleteApi && customer) {
@@ -1281,8 +1365,47 @@ export function Shipment() {
                                           toast.error(_('Recipient id missing'));
                                           return;
                                         }
-                                        if (getAddressKey(address) === selectedPickupAddressId) {
-                                          setSelectedPickupAddressId('');
+                                        const wasSelected =
+                                          getAddressKey(address) === selectedPickupAddressId;
+                                        const remainingPickupAddresses = updatedAddresses.filter(
+                                          (item) => normalizeDeliveryType(item) === 'pickup'
+                                        );
+                                        const remainingCourierAddresses = updatedAddresses.filter(
+                                          (item) => normalizeDeliveryType(item) === 'courier'
+                                        );
+                                        let clearedShipping = false;
+                                        if (wasSelected) {
+                                          if (remainingPickupAddresses.length > 0) {
+                                            const nextPickup =
+                                              remainingPickupAddresses.find(
+                                                (item) => item.isDefault
+                                              ) || remainingPickupAddresses[0];
+                                            await handlePickupSelect(nextPickup, {
+                                              closePanel: false
+                                            });
+                                          } else {
+                                            setSelectedPickupAddressId('');
+                                            if (remainingCourierAddresses.length > 0) {
+                                              const nextCourier =
+                                                remainingCourierAddresses.find(
+                                                  (item) => item.isDefault
+                                                ) || remainingCourierAddresses[0];
+                                              await handleCourierSelect(nextCourier, {
+                                                closePanel: false
+                                              });
+                                            } else {
+                                              await clearShippingSelection();
+                                              clearedShipping = true;
+                                            }
+                                          }
+                                        }
+                                        if (
+                                          remainingPickupAddresses.length === 0 &&
+                                          remainingCourierAddresses.length === 0
+                                        ) {
+                                          if (!clearedShipping) {
+                                            await clearShippingSelection();
+                                          }
                                         }
                                         toast.success(_('Recipient deleted'));
                                       } catch (error) {
@@ -1389,6 +1512,21 @@ export function Shipment() {
                                           address,
                                           customerAddresses
                                         );
+                                        const targetKey = getAddressKey(address);
+                                        const updatedAddresses = customerAddresses.filter(
+                                          (item) => {
+                                            if (targetKey) {
+                                              return getAddressKey(item) !== targetKey;
+                                            }
+                                            if (address.uuid) {
+                                              return item.uuid !== address.uuid;
+                                            }
+                                            const targetId = getAddressIdValue(address);
+                                            return targetId
+                                              ? getAddressIdValue(item) !== targetId
+                                              : true;
+                                          }
+                                        );
                                         if (addressId) {
                                           await deleteAddress(addressId);
                                         } else if (address.deleteApi && customer) {
@@ -1424,8 +1562,47 @@ export function Shipment() {
                                           toast.error(_('Recipient id missing'));
                                           return;
                                         }
-                                        if (getAddressKey(address) === selectedCourierAddressId) {
-                                          setSelectedCourierAddressId('');
+                                        const wasSelected =
+                                          getAddressKey(address) === selectedCourierAddressId;
+                                        const remainingPickupAddresses = updatedAddresses.filter(
+                                          (item) => normalizeDeliveryType(item) === 'pickup'
+                                        );
+                                        const remainingCourierAddresses = updatedAddresses.filter(
+                                          (item) => normalizeDeliveryType(item) === 'courier'
+                                        );
+                                        let clearedShipping = false;
+                                        if (wasSelected) {
+                                          if (remainingCourierAddresses.length > 0) {
+                                            const nextCourier =
+                                              remainingCourierAddresses.find(
+                                                (item) => item.isDefault
+                                              ) || remainingCourierAddresses[0];
+                                            await handleCourierSelect(nextCourier, {
+                                              closePanel: false
+                                            });
+                                          } else {
+                                            setSelectedCourierAddressId('');
+                                            if (remainingPickupAddresses.length > 0) {
+                                              const nextPickup =
+                                                remainingPickupAddresses.find(
+                                                  (item) => item.isDefault
+                                                ) || remainingPickupAddresses[0];
+                                              await handlePickupSelect(nextPickup, {
+                                                closePanel: false
+                                              });
+                                            } else {
+                                              await clearShippingSelection();
+                                              clearedShipping = true;
+                                            }
+                                          }
+                                        }
+                                        if (
+                                          remainingPickupAddresses.length === 0 &&
+                                          remainingCourierAddresses.length === 0
+                                        ) {
+                                          if (!clearedShipping) {
+                                            await clearShippingSelection();
+                                          }
                                         }
                                         toast.success(_('Recipient deleted'));
                                       } catch (error) {
@@ -1481,15 +1658,7 @@ export function Shipment() {
 
                 </div>
               ) : panelType === 'pickup' ? (
-                <div className="space-y-6">
-                  <button
-                    type="button"
-                    className="text-sm text-gray-500"
-                    onClick={() => setPanelStep('list')}
-                  >
-                    {_('Back')}
-                  </button>
-
+                <div className="h-full">
                   <DeliveryMapPicker
                     onPointSelect={handlePointSelect}
                     selectedPointId={selectedPointId}
@@ -1497,19 +1666,11 @@ export function Shipment() {
                     cartLength={cartDimensions.length}
                     cartWidth={cartDimensions.width}
                     cartHeight={cartDimensions.height}
-                    height="calc(100vh - 260px)"
+                    height="100%"
                   />
                 </div>
               ) : (
                 <div className="space-y-6">
-                  <button
-                    type="button"
-                    className="text-sm text-gray-500"
-                    onClick={() => setPanelStep('list')}
-                  >
-                    {_('Back')}
-                  </button>
-
                   <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
                     <div className="space-y-6">
                       <AddressOnlyForm
@@ -1634,14 +1795,41 @@ export function Shipment() {
                                               _('Failed to delete recipient')
                                           );
                                         }
+                                        const updatedRecipients = customerRecipients.filter(
+                                          (item) => item.uuid !== rawRecipient.uuid
+                                        );
                                         setCustomer({
                                           ...customer,
-                                          recipients: customerRecipients.filter(
-                                            (item) => item.uuid !== rawRecipient.uuid
-                                          )
+                                          recipients: updatedRecipients
                                         } as any);
                                         if (selectedRecipientKey === recipient.key) {
-                                          setSelectedRecipientKey('');
+                                          const fallbackRecipient =
+                                            customer && (customer.fullName || customerPhone)
+                                              ? {
+                                                  fullName: customer.fullName,
+                                                  telephone: customerPhone,
+                                                  isDefault: true
+                                                }
+                                              : null;
+                                          const nextRecipient =
+                                            updatedRecipients.find((item) => item.isDefault) ||
+                                            updatedRecipients[0] ||
+                                            fallbackRecipient;
+                                          const nextName = nextRecipient?.fullName || '';
+                                          const nextPhone = nextRecipient?.telephone || '';
+                                          const nextKey = getRecipientKey(nextName, nextPhone);
+                                          if (nextKey) {
+                                            setSelectedRecipientKey(nextKey);
+                                          } else {
+                                            setSelectedRecipientKey('');
+                                          }
+                                          if (nextName || nextPhone) {
+                                            setShippingAddressFields({
+                                              full_name: nextName,
+                                              telephone: nextPhone
+                                            });
+                                            primeRecipientDraft(nextName, nextPhone);
+                                          }
                                         }
                                         toast.success(_('Recipient deleted'));
                                       } catch (error) {

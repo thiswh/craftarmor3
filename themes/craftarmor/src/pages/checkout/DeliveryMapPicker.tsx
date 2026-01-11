@@ -5,6 +5,7 @@ import { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { MapRef, ViewState } from 'react-map-gl/maplibre';
 import Supercluster from 'supercluster';
+import { _ } from '@evershop/evershop/lib/locale/translate/_';
 
 interface DeliveryPoint {
   id: number;
@@ -40,6 +41,36 @@ interface DeliveryCalculation {
   deliveryTimeMin: number;
   deliveryTimeMax: number;
 }
+
+const formatPickupPointLines = (point: DeliveryPointDetail) => {
+  const primary = point.name || point.address || '';
+  const city = point.city || '';
+  const region = point.region || '';
+  const postcode = point.postal_code || '';
+
+  const locationParts: string[] = [];
+  if (region && region !== city) {
+    locationParts.push(region);
+  }
+  if (city) {
+    locationParts.push(city);
+  }
+  const locationLine = locationParts.join(', ');
+
+  const detailParts = [locationLine, primary === point.address ? '' : point.address]
+    .filter(Boolean)
+    .join(', ');
+  const detailLine = postcode ? `${detailParts} · ${postcode}` : detailParts;
+
+  const lines: string[] = [];
+  if (primary) {
+    lines.push(primary);
+  }
+  if (detailLine) {
+    lines.push(detailLine);
+  }
+  return lines;
+};
 
 interface DeliveryMapPickerProps {
   onPointSelect?: (
@@ -146,12 +177,17 @@ export default function DeliveryMapPicker({
   const [currentZoom, setCurrentZoom] = useState(DEFAULT_ZOOM);
   const [clusters, setClusters] = useState<any[]>([]);
   const [pointDetails, setPointDetails] = useState<
-    Map<number, { point: DeliveryPointDetail; calculation: DeliveryCalculation }>
+    Map<
+      number,
+      { point: DeliveryPointDetail; calculation: DeliveryCalculation; calcKey: string }
+    >
   >(new Map());
   const [openedPointId, setOpenedPointId] = useState<number | null>(null);
+  const [activePointId, setActivePointId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [isMapActive, setIsMapActive] = useState(false);
   const [isListOpen, setIsListOpen] = useState(false);
 
@@ -159,6 +195,8 @@ export default function DeliveryMapPicker({
   const isMountedRef = useRef(true);
   const mapRef = useRef<MapRef>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const detailAbortRef = useRef<AbortController | null>(null);
+  const latestDetailPointRef = useRef<number | null>(null);
   const dimensionsKey = useMemo(
     () => `${cartWeight}-${cartLength}-${cartWidth}-${cartHeight}`,
     [cartWeight, cartLength, cartWidth, cartHeight]
@@ -324,17 +362,24 @@ export default function DeliveryMapPicker({
 
   const loadPointDetailAndCalculate = useCallback(
     async (pointId: number) => {
-      if (loadingDetail) {
-        return;
-      }
-
+      let abortController: AbortController | null = null;
       try {
         if (!isMountedRef.current) return;
 
+        if (detailAbortRef.current) {
+          detailAbortRef.current.abort();
+        }
+        abortController = new AbortController();
+        detailAbortRef.current = abortController;
+        latestDetailPointRef.current = pointId;
+
         setLoadingDetail(true);
         setError(null);
+        setDetailError(null);
 
-        const pointResponse = await fetch(`/api/delivery/points/${pointId}`);
+        const pointResponse = await fetch(`/api/delivery/points/${pointId}`, {
+          signal: abortController.signal
+        });
 
         if (!pointResponse.ok) {
           throw new Error('Failed to load point details');
@@ -342,7 +387,9 @@ export default function DeliveryMapPicker({
 
         const pointData = await pointResponse.json();
 
-        if (!isMountedRef.current) return;
+        if (!isMountedRef.current || latestDetailPointRef.current !== pointId) {
+          return;
+        }
         if (!pointData.success || !pointData.data || !pointData.data.point) {
           throw new Error('Point not found');
         }
@@ -354,6 +401,7 @@ export default function DeliveryMapPicker({
           headers: {
             'Content-Type': 'application/json'
           },
+          signal: abortController.signal,
           body: JSON.stringify({
             pointId: pointId,
             serviceCode: pointDetail.service_code,
@@ -377,7 +425,9 @@ export default function DeliveryMapPicker({
 
         const calcData = await calcResponse.json();
 
-        if (!isMountedRef.current) return;
+        if (!isMountedRef.current || latestDetailPointRef.current !== pointId) {
+          return;
+        }
 
         if (!calcData.success || !calcData.data || !calcData.data.calculation) {
           throw new Error(calcData.message || 'Calculation failed');
@@ -391,37 +441,59 @@ export default function DeliveryMapPicker({
         };
 
         setPointDetails(
-          (prev) => new Map(prev).set(pointId, { point: pointDetail, calculation })
+          (prev) =>
+            new Map(prev).set(pointId, {
+              point: pointDetail,
+              calculation,
+              calcKey: dimensionsKey
+            })
         );
         setOpenedPointId(pointId);
       } catch (err: any) {
+        if (err.name === 'AbortError') {
+          return;
+        }
+        if (latestDetailPointRef.current !== pointId) {
+          return;
+        }
         if (!isMountedRef.current) return;
+        setPointDetails((prev) => {
+          const updated = new Map(prev);
+          updated.delete(pointId);
+          return updated;
+        });
         console.error('[DeliveryMapPicker] Error loading point detail:', err);
         setError(err.message || 'Failed to load pickup point details.');
+        setDetailError(err.message || 'Failed to load pickup point details.');
       } finally {
-        if (isMountedRef.current) {
+        if (
+          isMountedRef.current &&
+          abortController &&
+          detailAbortRef.current === abortController
+        ) {
           setLoadingDetail(false);
+          detailAbortRef.current = null;
         }
       }
     },
-    [cartHeight, cartLength, cartWeight, cartWidth, loadingDetail]
+    [cartHeight, cartLength, cartWeight, cartWidth, dimensionsKey]
   );
 
   const handleMarkerClick = useCallback(
     (point: DeliveryPoint) => {
+      setActivePointId(point.id);
+      setOpenedPointId(point.id);
+      setError(null);
+      setDetailError(null);
       setPointDetails((prev) => {
         const existingData = prev.get(point.id);
-        if (existingData) {
-          setTimeout(() => {
-            setOpenedPointId(point.id);
-          }, 0);
-        } else if (!loadingDetail) {
+        if (!existingData) {
           loadPointDetailAndCalculate(point.id);
         }
         return prev;
       });
     },
-    [loadPointDetailAndCalculate, loadingDetail]
+    [loadPointDetailAndCalculate]
   );
 
   useEffect(() => {
@@ -435,13 +507,31 @@ export default function DeliveryMapPicker({
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+      if (detailAbortRef.current) {
+        detailAbortRef.current.abort();
+        detailAbortRef.current = null;
+      }
     };
   }, []);
 
   useEffect(() => {
     setPointDetails(new Map());
     setOpenedPointId(null);
+    setActivePointId(null);
+    if (detailAbortRef.current) {
+      detailAbortRef.current.abort();
+      detailAbortRef.current = null;
+    }
+    latestDetailPointRef.current = null;
+    setLoadingDetail(false);
+    setDetailError(null);
   }, [dimensionsKey]);
+
+  useEffect(() => {
+    if (selectedPointId) {
+      setActivePointId(selectedPointId);
+    }
+  }, [selectedPointId]);
 
   useEffect(() => {
     if (isClient && mapRef.current && isMapActive) {
@@ -452,7 +542,13 @@ export default function DeliveryMapPicker({
     }
   }, [isClient, isMapActive, loadPoints]);
 
-  const selectedPointData = openedPointId ? pointDetails.get(openedPointId) : null;
+  const selectedPointDataRaw = openedPointId
+    ? pointDetails.get(openedPointId)
+    : null;
+  const selectedPointData =
+    selectedPointDataRaw && selectedPointDataRaw.calcKey === dimensionsKey
+      ? selectedPointDataRaw
+      : null;
 
   const geoJsonPoints = useMemo(() => {
     const features: Array<{
@@ -542,13 +638,13 @@ export default function DeliveryMapPicker({
           anchor="bottom"
         >
           <CdekMarker
-            isSelected={selectedPointId === point.id}
+            isSelected={activePointId === point.id || selectedPointId === point.id}
             onClick={() => handleMarkerClick(point)}
           />
         </Marker>
       );
     });
-  }, [clusters, selectedPointId, handleMarkerClick]);
+  }, [clusters, selectedPointId, activePointId, handleMarkerClick]);
 
   const visiblePoints = useMemo(() => {
     if (!currentBounds) return [];
@@ -568,6 +664,8 @@ export default function DeliveryMapPicker({
 
   const handlePointListSelect = (point: DeliveryPoint) => {
     setIsMapActive(true);
+    setError(null);
+    setDetailError(null);
     handleMarkerClick(point);
     if (mapRef.current) {
       mapRef.current.getMap().flyTo({
@@ -593,23 +691,20 @@ export default function DeliveryMapPicker({
   }
 
   return (
-    <div className="delivery-map-picker">
-      <div className="border rounded-lg overflow-hidden bg-white">
+    <div className="delivery-map-picker h-full" style={{ height: mapHeight }}>
+      <div className="relative overflow-hidden bg-white h-full min-h-0">
         <div
-          className={`grid ${isMobile ? 'grid-cols-1' : 'grid-cols-[320px_1fr]'}`}
+          className={`grid h-full min-h-0 ${isMobile ? 'grid-cols-1' : 'grid-cols-[360px_1fr]'}`}
         >
           {!isMobile && (
-            <aside className="border-r bg-white">
+            <aside className="border-r bg-white h-full min-h-0">
               <div className="p-4 border-b">
                 <div className="text-sm font-medium">Pickup points</div>
                 <div className="text-xs text-gray-500 mt-1">
                   {visiblePoints.length} points in this area
                 </div>
               </div>
-              <div
-                className="overflow-y-auto"
-                style={{ maxHeight: mapHeight }}
-              >
+              <div className="overflow-y-auto h-full min-h-0">
                 {visiblePoints.length === 0 && (
                   <div className="p-4 text-sm text-gray-500">
                     No pickup points in this area.
@@ -621,7 +716,8 @@ export default function DeliveryMapPicker({
                   const subtitle = [point.city, point.address]
                     .filter(Boolean)
                     .join(', ');
-                  const isSelected = selectedPointId === point.id;
+                  const isSelected =
+                    activePointId === point.id || selectedPointId === point.id;
                   return (
                     <button
                       key={point.id}
@@ -644,8 +740,8 @@ export default function DeliveryMapPicker({
             </aside>
           )}
 
-          <div className="relative">
-            <div className="w-full relative" style={{ height: mapHeight }}>
+          <div className="relative min-h-0 overflow-hidden">
+            <div className="w-full relative h-full min-h-0 overflow-hidden">
               {/* @ts-ignore - react-map-gl type issue with React 19 */}
               <MapComponent
                 ref={mapRef}
@@ -683,74 +779,6 @@ export default function DeliveryMapPicker({
                   >
                     Show pickup points
                   </button>
-                </div>
-              )}
-
-              {openedPointId && selectedPointData && (
-                <div className="absolute top-0 right-0 h-full w-full max-w-[360px] bg-white border-l shadow-lg z-20 flex flex-col">
-                  <div className="flex items-center justify-between p-4 border-b">
-                    <div className="text-sm font-medium">
-                      {selectedPointData.point.service_name || 'Pickup point'}
-                    </div>
-                    <button
-                      type="button"
-                      className="text-gray-500"
-                      onClick={() => setOpenedPointId(null)}
-                    >
-                      x
-                    </button>
-                  </div>
-                  <div className="p-4 flex-1 overflow-y-auto">
-                    <div className="text-sm font-medium">
-                      {selectedPointData.point.address}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {selectedPointData.point.city}
-                      {selectedPointData.point.region &&
-                      selectedPointData.point.region !==
-                        selectedPointData.point.city
-                        ? `, ${selectedPointData.point.region}`
-                        : ''}
-                      {selectedPointData.point.postal_code
-                        ? `, ${selectedPointData.point.postal_code}`
-                        : ''}
-                    </div>
-
-                    {selectedPointData.point.schedule && (
-                      <div className="mt-4 text-xs text-gray-600 whitespace-pre-line">
-                        {typeof selectedPointData.point.schedule === 'string'
-                          ? selectedPointData.point.schedule
-                          : JSON.stringify(selectedPointData.point.schedule)}
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-4 border-t">
-                    <div className="bg-gray-50 border rounded-md p-3 text-center mb-3">
-                      <div className="text-xs text-gray-500">
-                        Delivery cost
-                      </div>
-                      <div className="text-lg font-semibold">
-                        {selectedPointData.calculation.cost}{' '}
-                        {selectedPointData.calculation.currency}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="w-full bg-gray-900 text-white py-2 rounded-md"
-                      onClick={() => {
-                        if (onPointSelect && openedPointId) {
-                          onPointSelect(
-                            openedPointId,
-                            selectedPointData.calculation,
-                            selectedPointData.point
-                          );
-                          setOpenedPointId(null);
-                        }
-                      }}
-                    >
-                      Select this point
-                    </button>
-                  </div>
                 </div>
               )}
 
@@ -830,6 +858,119 @@ export default function DeliveryMapPicker({
             )}
           </div>
         </div>
+
+        {openedPointId && (
+          <div className="absolute top-0 left-0 h-full w-full max-w-[360px] bg-white border-r shadow-lg z-20 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="text-xs font-medium text-gray-600">
+                <span
+                  className={`inline-flex items-center rounded-full border px-3 py-1 ${
+                    loadingDetail || !selectedPointData
+                      ? 'bg-gray-200 text-transparent animate-pulse'
+                      : ''
+                  }`}
+                >
+                  {loadingDetail || !selectedPointData
+                    ? 'CDEK · PVZ'
+                    : selectedPointData.point.service_code
+                      ? selectedPointData.point.service_code.toUpperCase()
+                      : 'CDEK'}
+                  {!loadingDetail &&
+                  selectedPointData?.point.metadata?.type
+                    ? ` · ${selectedPointData.point.metadata.type}`
+                    : ''}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="text-gray-500"
+                onClick={() => setOpenedPointId(null)}
+              >
+                x
+              </button>
+            </div>
+            <div className="p-4 flex-1 overflow-y-auto space-y-4">
+              {detailError && !loadingDetail ? (
+                <div className="text-sm text-red-600">{detailError}</div>
+              ) : loadingDetail || !selectedPointData ? (
+                <>
+                  <div className="space-y-2">
+                    <div className="h-4 w-4/5 rounded bg-gray-200 animate-pulse"></div>
+                    <div className="h-3 w-full rounded bg-gray-200 animate-pulse"></div>
+                  </div>
+                  <div className="border-t pt-3 space-y-2">
+                    <div className="h-3 w-24 rounded bg-gray-200 animate-pulse"></div>
+                    <div className="h-8 w-full rounded bg-gray-200 animate-pulse"></div>
+                  </div>
+                  <div className="border-t pt-3">
+                    <div className="h-16 w-full rounded bg-gray-200 animate-pulse"></div>
+                  </div>
+                  <div className="h-9 w-full rounded bg-gray-200 animate-pulse"></div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1 text-xs text-gray-600">
+                    {formatPickupPointLines(selectedPointData.point).map(
+                      (line, index) => (
+                        <div
+                          key={line}
+                          className={
+                            index === 0
+                              ? 'text-sm font-medium text-gray-900'
+                              : undefined
+                          }
+                        >
+                          {line}
+                        </div>
+                      )
+                    )}
+                  </div>
+
+                  {selectedPointData.point.schedule && (
+                    <div className="border-t pt-3 space-y-2">
+                      <div className="text-xs font-medium text-gray-700">
+                        {_('Work schedule')}
+                      </div>
+                      <div className="rounded-md border bg-gray-50 px-3 py-2 text-xs text-gray-600 whitespace-pre-line">
+                        {typeof selectedPointData.point.schedule === 'string'
+                          ? selectedPointData.point.schedule
+                          : JSON.stringify(selectedPointData.point.schedule)}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border-t pt-3">
+                    <div className="bg-gray-50 border rounded-md p-3 text-center">
+                      <div className="text-xs text-gray-500">
+                        {_('Delivery cost')}
+                      </div>
+                      <div className="text-lg font-semibold">
+                        {selectedPointData.calculation.cost}{' '}
+                        {selectedPointData.calculation.currency}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="w-full bg-gray-900 text-white py-2 rounded-md"
+                    onClick={() => {
+                      if (onPointSelect && openedPointId) {
+                        onPointSelect(
+                          openedPointId,
+                          selectedPointData.calculation,
+                          selectedPointData.point
+                        );
+                      }
+                    }}
+                  >
+                    {_('Select pickup point')}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

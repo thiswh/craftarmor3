@@ -11,10 +11,15 @@ export interface CartDimensionsResult {
   height: number;
 }
 
+const toPositiveNumber = (value: string | undefined, fallback: number): number => {
+  const parsed = parseFloat(value || '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 export const DEFAULT_CART_DIMENSIONS: CartDimensionsResult = {
-  length: 18,
-  width: 20,
-  height: 5
+  length: toPositiveNumber(process.env.DEFAULT_CART_LENGTH, 18),
+  width: toPositiveNumber(process.env.DEFAULT_CART_WIDTH, 20),
+  height: toPositiveNumber(process.env.DEFAULT_CART_HEIGHT, 5)
 };
 
 export const calculateCartDimensions = (
@@ -34,9 +39,14 @@ export const calculateCartDimensions = (
 
   items.forEach((item) => {
     const qty = Math.max(1, Math.floor(item.qty || 0));
-    const length = item.length || 0;
-    const width = item.width || 0;
-    const height = item.height || 0;
+    const rawLength = item.length || 0;
+    const rawWidth = item.width || 0;
+    const rawHeight = item.height || 0;
+    const useFallback =
+      rawLength <= 0 || rawWidth <= 0 || rawHeight <= 0;
+    const length = useFallback ? fallback.length : rawLength;
+    const width = useFallback ? fallback.width : rawWidth;
+    const height = useFallback ? fallback.height : rawHeight;
 
     if (length <= 0 && width <= 0 && height <= 0) {
       return;

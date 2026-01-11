@@ -107,7 +107,12 @@ export default async function shippingCalculate(
 
     const shippingAddressId = cart.shipping_address_id;
     if (!shippingAddressId) {
-      response.$body = { success: true, data: { cost: 0 } };
+      response.statusCode = 400;
+      response.$body = {
+        success: false,
+        message: 'Shipping address is not selected',
+        data: { cost: 0 }
+      };
       return;
     }
 
@@ -117,7 +122,12 @@ export default async function shippingCalculate(
       .load(pool);
 
     if (!shippingAddress) {
-      response.$body = { success: true, data: { cost: 0 } };
+      response.statusCode = 400;
+      response.$body = {
+        success: false,
+        message: 'Shipping address is not available',
+        data: { cost: 0 }
+      };
       return;
     }
 
@@ -273,9 +283,12 @@ export default async function shippingCalculate(
       }
     } catch (calcError: any) {
       console.error('[shippingCalculate] Calculation error:', calcError);
+      response.statusCode = 200;
       response.$body = {
         success: false,
-        message: calcError.message || 'Shipping calculation failed',
+        message:
+          calcError?.message ||
+          'Shipping service is unavailable. Please try again later.',
         data: {
           cost: 0
         }
