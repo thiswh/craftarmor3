@@ -287,6 +287,81 @@ const getPickupSummaryLines = (address: ExtendedCustomerAddress) => {
   return lines;
 };
 
+const sortAddressesBySelection = (
+  addresses: ExtendedCustomerAddress[],
+  selectedKey?: string
+) => {
+  if (!selectedKey) {
+    return addresses;
+  }
+  const sorted = [...addresses];
+  sorted.sort((left, right) => {
+    const leftKey = getAddressKey(left);
+    const rightKey = getAddressKey(right);
+    if (leftKey === selectedKey) {
+      return -1;
+    }
+    if (rightKey === selectedKey) {
+      return 1;
+    }
+    if (left.isDefault && !right.isDefault) {
+      return -1;
+    }
+    if (!left.isDefault && right.isDefault) {
+      return 1;
+    }
+    return 0;
+  });
+  return sorted;
+};
+
+const mergeAddressOrder = (
+  ordered: ExtendedCustomerAddress[],
+  current: ExtendedCustomerAddress[]
+) => {
+  if (ordered.length === 0) {
+    return current;
+  }
+  const currentKeySet = new Set(current.map((item) => getAddressKey(item)));
+  const filtered = ordered.filter((item) =>
+    currentKeySet.has(getAddressKey(item))
+  );
+  const filteredKeySet = new Set(filtered.map((item) => getAddressKey(item)));
+  const appended = current.filter(
+    (item) => !filteredKeySet.has(getAddressKey(item))
+  );
+  return [...filtered, ...appended];
+};
+
+const findPickupAddressByPoint = (
+  addresses: ExtendedCustomerAddress[],
+  pointDetail: DeliveryPointDetail
+) =>
+  addresses.find((address) => {
+    const meta = getPickupMetaFromAddress(address);
+    if (!meta) {
+      return false;
+    }
+    const pickupData = meta.pickup_data as Record<string, string> | null;
+    const metaPointId =
+      meta.pickup_point_id ?? (pickupData?.id ? Number(pickupData.id) : null);
+    const metaExternalId = meta.pickup_external_id ?? pickupData?.external_id;
+    const metaService =
+      meta.pickup_service_code ?? pickupData?.service_code ?? 'cdek';
+    if (metaPointId && metaPointId === pointDetail.id) {
+      return true;
+    }
+    if (
+      metaExternalId &&
+      pointDetail.external_id &&
+      metaExternalId === pointDetail.external_id &&
+      metaService === (pointDetail.service_code || 'cdek')
+    ) {
+      return true;
+    }
+    return false;
+  });
+
 export function Shipment() {
   const [selectedPointId, setSelectedPointId] = useState<number | undefined>();
   const [deliveryType, setDeliveryType] = useState<DeliveryType>('pickup');
@@ -298,8 +373,16 @@ export function Shipment() {
   const [selectedPickupAddressId, setSelectedPickupAddressId] = useState<string>('');
   const [selectedCourierAddressId, setSelectedCourierAddressId] = useState<string>('');
   const [selectedRecipientKey, setSelectedRecipientKey] = useState<string>('');
+  const [isApplyingShipment, setIsApplyingShipment] = useState(false);
+  const [orderedPickupAddresses, setOrderedPickupAddresses] = useState<
+    ExtendedCustomerAddress[]
+  >([]);
+  const [orderedCourierAddresses, setOrderedCourierAddresses] = useState<
+    ExtendedCustomerAddress[]
+  >([]);
   const defaultRecipientCreatedRef = useRef(false);
   const bodyOverflowRef = useRef<string | null>(null);
+  const panelOpenRef = useRef(false);
 
   const { data: cart, loadingStates } = useCartState();
   const {
@@ -382,20 +465,18 @@ export function Shipment() {
     });
     return Array.from(map.values());
   }, [customerRecipients]);
-  const pickupAddresses = useMemo(
-    () =>
-      customerAddresses.filter(
-        (address) => normalizeDeliveryType(address) === 'pickup'
-      ),
-    [customerAddresses]
-  );
-  const courierAddresses = useMemo(
-    () =>
-      customerAddresses.filter(
-        (address) => normalizeDeliveryType(address) === 'courier'
-      ),
-    [customerAddresses]
-  );
+  const pickupAddresses = useMemo(() => {
+    const filtered = customerAddresses.filter(
+      (address) => normalizeDeliveryType(address) === 'pickup'
+    );
+    return filtered;
+  }, [customerAddresses, selectedPickupAddressId]);
+  const courierAddresses = useMemo(() => {
+    const filtered = customerAddresses.filter(
+      (address) => normalizeDeliveryType(address) === 'courier'
+    );
+    return filtered;
+  }, [customerAddresses, selectedCourierAddressId]);
 
   const selectedPickupAddress = useMemo(
     () =>
@@ -421,6 +502,56 @@ export function Shipment() {
   const closePanel = () => {
     setIsPanelOpen(false);
   };
+
+  useEffect(() => {
+    const wasOpen = panelOpenRef.current;
+    const closedNow = wasOpen && !isPanelOpen;
+    if (closedNow) {
+      setOrderedPickupAddresses([]);
+      setOrderedCourierAddresses([]);
+    }
+
+    if (isPanelOpen && panelStep === 'list') {
+      if (panelType === 'pickup') {
+        setOrderedPickupAddresses((prev) => {
+          if (prev.length === 0) {
+            return sortAddressesBySelection(
+              pickupAddresses,
+              selectedPickupAddressId
+            );
+          }
+          return mergeAddressOrder(prev, pickupAddresses);
+        });
+      } else {
+        setOrderedCourierAddresses((prev) => {
+          if (prev.length === 0) {
+            return sortAddressesBySelection(
+              courierAddresses,
+              selectedCourierAddressId
+            );
+          }
+          return mergeAddressOrder(prev, courierAddresses);
+        });
+      }
+    }
+
+    panelOpenRef.current = isPanelOpen;
+  }, [
+    isPanelOpen,
+    panelStep,
+    panelType,
+    pickupAddresses,
+    courierAddresses,
+    selectedPickupAddressId,
+    selectedCourierAddressId
+  ]);
+
+  const displayPickupAddresses =
+    orderedPickupAddresses.length > 0 ? orderedPickupAddresses : pickupAddresses;
+  const displayCourierAddresses =
+    orderedCourierAddresses.length > 0
+      ? orderedCourierAddresses
+      : courierAddresses;
 
   const openRecipientPanel = () => {
     setRecipientPanelStep('list');
@@ -831,7 +962,11 @@ export function Shipment() {
     method: { code: string; name: string },
     extraAddressData?: Record<string, unknown>
   ) => {
+    if (isApplyingShipment) {
+      return false;
+    }
     try {
+      setIsApplyingShipment(true);
       const validate = await form.trigger('shippingAddress');
       if (!validate) {
         return false;
@@ -858,6 +993,8 @@ export function Shipment() {
         error instanceof Error ? error.message : _('Failed to update shipment')
       );
       return false;
+    } finally {
+      setIsApplyingShipment(false);
     }
   };
 
@@ -1035,6 +1172,14 @@ export function Shipment() {
     }
 
     if (customer) {
+      const existingPickup = findPickupAddressByPoint(pickupAddresses, pointDetail);
+      if (existingPickup) {
+        const existingKey = getAddressKey(existingPickup);
+        if (existingKey) {
+          setSelectedPickupAddressId(existingKey);
+        }
+        return;
+      }
       const pickupData = {
         delivery_type: 'pickup',
         pickup_point_id: pointDetail.id,
@@ -1185,7 +1330,10 @@ export function Shipment() {
 
       {isPanelOpen && (
         <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/40" onClick={closePanel} />
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={isApplyingShipment ? undefined : closePanel}
+          />
           <div
             className={
               panelStep === 'list'
@@ -1196,10 +1344,17 @@ export function Shipment() {
             <div
               className={
                 panelStep === 'list'
-                  ? 'w-full max-w-md max-h-[90vh] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden'
-                  : 'w-full h-full bg-white shadow-xl flex flex-col'
+                  ? 'w-full max-w-md max-h-[90vh] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden relative'
+                  : 'w-full h-full bg-white shadow-xl flex flex-col relative'
               }
             >
+            {isApplyingShipment && (
+              <div className="absolute inset-0 z-20 bg-white/80 flex items-center justify-center">
+                <div className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white shadow">
+                  {_('Applying delivery...')}
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between border-b px-4 py-3">
               <div className="flex items-center gap-2">
                 {panelStep !== 'list' ? (
@@ -1244,29 +1399,31 @@ export function Shipment() {
               }`}
             >
               {panelStep === 'list' && (
-                <div className="inline-flex items-center rounded-full border bg-gray-50 p-1 mb-6">
-                  <button
-                    type="button"
-                    className={`px-4 py-2 rounded-full text-sm ${
-                      panelType === 'pickup'
-                        ? 'bg-gray-900 text-white'
-                        : 'text-gray-600'
-                    }`}
-                    onClick={() => handleDeliveryTypeChange('pickup')}
-                  >
-                    {pickupMethod.name}
-                  </button>
-                  <button
-                    type="button"
-                    className={`px-4 py-2 rounded-full text-sm ${
-                      panelType === 'courier'
-                        ? 'bg-gray-900 text-white'
-                        : 'text-gray-600'
-                    }`}
-                    onClick={() => handleDeliveryTypeChange('courier')}
-                  >
-                    {courierMethod.name}
-                  </button>
+                <div className="flex justify-center mb-6">
+                  <div className="inline-flex items-center rounded-full border bg-gray-50">
+                    <button
+                      type="button"
+                      className={`px-4 py-2 rounded-full text-sm ${
+                        panelType === 'pickup'
+                          ? 'bg-gray-900 text-white'
+                          : 'text-gray-600'
+                      }`}
+                      onClick={() => handleDeliveryTypeChange('pickup')}
+                    >
+                      {pickupMethod.name}
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-4 py-2 rounded-full text-sm ${
+                        panelType === 'courier'
+                          ? 'bg-gray-900 text-white'
+                          : 'text-gray-600'
+                      }`}
+                      onClick={() => handleDeliveryTypeChange('courier')}
+                    >
+                      {courierMethod.name}
+                    </button>
+                  </div>
                 </div>
               )}
               {panelStep === 'list' ? (
@@ -1286,7 +1443,7 @@ export function Shipment() {
                       </button>
                       {pickupAddresses.length > 0 ? (
                         <div className="grid grid-cols-1 gap-4">
-                          {pickupAddresses.map((address) => {
+                          {displayPickupAddresses.map((address) => {
                             const addressId = getAddressKey(address);
                             const isSelected =
                               addressId !== '' && addressId === selectedPickupAddressId;
@@ -1483,7 +1640,7 @@ export function Shipment() {
                       </button>
                       {courierAddresses.length > 0 ? (
                         <div className="grid grid-cols-1 gap-4">
-                          {courierAddresses.map((address) => {
+                          {displayCourierAddresses.map((address) => {
                             const addressId = getAddressKey(address);
                             const isSelected =
                               addressId !== '' && addressId === selectedCourierAddressId;
