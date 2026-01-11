@@ -1432,14 +1432,14 @@ export function Shipment() {
                     <div className="space-y-4">
                       <button
                         type="button"
-                        className="text-sm text-blue-600"
+                        className="inline-flex items-center rounded-full border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                         onClick={() => {
                           setSelectedPickupAddressId('');
                           setSelectedPointId(undefined);
                           setPanelStep('detail');
                         }}
                       >
-                        + {_('Add pickup point')}
+                        {_('Add pickup point')}
                       </button>
                       {pickupAddresses.length > 0 ? (
                         <div className="grid grid-cols-1 gap-4">
@@ -1633,10 +1633,10 @@ export function Shipment() {
                     <div className="space-y-4">
                       <button
                         type="button"
-                        className="text-sm text-blue-600"
+                        className="inline-flex items-center rounded-full border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                         onClick={() => setPanelStep('detail')}
                       >
-                        + {_('Add address')}
+                        {_('Add address')}
                       </button>
                       {courierAddresses.length > 0 ? (
                         <div className="grid grid-cols-1 gap-4">
