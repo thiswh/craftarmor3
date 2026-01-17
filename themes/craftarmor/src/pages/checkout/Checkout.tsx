@@ -3,6 +3,7 @@ import { Form } from '@components/common/form/Form.js';
 import { CartItems } from '@components/frontStore/cart/CartItems.js';
 import { CartSummaryItemsList } from '@components/frontStore/cart/CartSummaryItems.js';
 import { CartTotalSummary } from '@components/frontStore/cart/CartTotalSummary.js';
+import { useCartState } from '@components/frontStore/cart/CartContext.js';
 import { CheckoutButton } from '@components/frontStore/checkout/CheckoutButton.js';
 import { CheckoutProvider } from '@components/frontStore/checkout/CheckoutContext.js';
 import { ContactInformation } from '@components/frontStore/checkout/ContactInformation.js';
@@ -24,6 +25,8 @@ interface CheckoutPageProps {
 function CheckoutContent() {
   const { customer } = useCustomer();
   const isLoggedIn = Boolean(customer);
+  const { data: cart } = useCartState();
+  const hasDelivery = Boolean(cart?.shippingMethod && cart?.shippingAddress);
 
   return (
     <>
@@ -32,7 +35,7 @@ function CheckoutContent() {
         <>
           <Shipment />
           <Payment />
-          <CheckoutButton />
+          {hasDelivery ? <CheckoutButton /> : null}
         </>
       ) : (
         <div className="mt-6 rounded border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">

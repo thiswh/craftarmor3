@@ -383,6 +383,7 @@ export function Shipment() {
   const defaultRecipientCreatedRef = useRef(false);
   const bodyOverflowRef = useRef<string | null>(null);
   const panelOpenRef = useRef(false);
+  const autoAppliedShippingRef = useRef(false);
 
   const { data: cart, loadingStates } = useCartState();
   const {
@@ -394,7 +395,8 @@ export function Shipment() {
   const { form } = useCheckout();
   const { updateCheckoutData } = useCheckoutDispatch();
   const { customer, isLoading: isCustomerLoading } = useCustomer();
-  const { addAddress, deleteAddress, setCustomer } = useCustomerDispatch();
+  const { addAddress, deleteAddress, updateAddress, setCustomer } =
+    useCustomerDispatch();
 
   const shippingAddress = cart?.shippingAddress;
   const availableShippingMethods = cart?.availableShippingMethods;
@@ -1067,6 +1069,21 @@ export function Shipment() {
     setSelectedCourierAddressId(getAddressKey(address));
     const addressData = mapCustomerAddressToForm(address);
     setShippingAddressFields(addressData, { preserveRecipient: true });
+    if (customer) {
+      const addressId = resolveAddressId(address, customerAddresses);
+      if (addressId && !address.isDefault) {
+        try {
+          await updateAddress(addressId, { is_default: true });
+        } catch (error) {
+          console.error('[Shipment] Failed to set default address:', error);
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : _('Failed to set default address')
+          );
+        }
+      }
+    }
     const updated = await updateShipment(courierMethod);
     if (updated && options?.closePanel !== false) {
       closePanel();
@@ -1080,6 +1097,21 @@ export function Shipment() {
     setSelectedPickupAddressId(getAddressKey(address));
     const addressData = mapCustomerAddressToForm(address);
     setShippingAddressFields(addressData, { preserveRecipient: true });
+    if (customer) {
+      const addressId = resolveAddressId(address, customerAddresses);
+      if (addressId && !address.isDefault) {
+        try {
+          await updateAddress(addressId, { is_default: true });
+        } catch (error) {
+          console.error('[Shipment] Failed to set default address:', error);
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : _('Failed to set default address')
+          );
+        }
+      }
+    }
     const updated = await updateShipment(pickupMethod, getPickupMetaFromAddress(address));
     if (updated && options?.closePanel !== false) {
       closePanel();
@@ -1104,7 +1136,8 @@ export function Shipment() {
     try {
       const created = await addAddress({
         ...addressData,
-        delivery_type: 'courier'
+        delivery_type: 'courier',
+        is_default: true
       });
       if (created) {
         const createdKey = normalizeId(created.uuid || created.addressId);
@@ -1178,6 +1211,19 @@ export function Shipment() {
         if (existingKey) {
           setSelectedPickupAddressId(existingKey);
         }
+        const existingId = resolveAddressId(existingPickup, customerAddresses);
+        if (existingId && !existingPickup.isDefault) {
+          try {
+            await updateAddress(existingId, { is_default: true });
+          } catch (error) {
+            console.error('[Shipment] Failed to set default address:', error);
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : _('Failed to set default address')
+            );
+          }
+        }
         return;
       }
       const pickupData = {
@@ -1200,7 +1246,8 @@ export function Shipment() {
       try {
         const created = await addAddress({
           ...pickupAddressData,
-          ...pickupData
+          ...pickupData,
+          is_default: true
         });
         if (created) {
           const createdKey = normalizeId(created.uuid || created.addressId);
@@ -1245,6 +1292,41 @@ export function Shipment() {
     cart?.shippingMethod,
     cart?.shippingAddress,
     cart?.uuid
+  ]);
+
+  useEffect(() => {
+    if (autoAppliedShippingRef.current) {
+      return;
+    }
+    if (!addressesLoaded) {
+      return;
+    }
+    if (cart?.shippingMethod || cart?.shippingAddress) {
+      return;
+    }
+
+    const defaultPickup =
+      pickupAddresses.find((address) => address.isDefault) || pickupAddresses[0];
+    const defaultCourier =
+      courierAddresses.find((address) => address.isDefault) || courierAddresses[0];
+    const targetAddress = defaultPickup || defaultCourier;
+    if (!targetAddress) {
+      return;
+    }
+
+    autoAppliedShippingRef.current = true;
+    const targetType = normalizeDeliveryType(targetAddress);
+    if (targetType === 'pickup') {
+      handlePickupSelect(targetAddress, { closePanel: false });
+    } else {
+      handleCourierSelect(targetAddress, { closePanel: false });
+    }
+  }, [
+    addressesLoaded,
+    cart?.shippingAddress,
+    cart?.shippingMethod,
+    pickupAddresses,
+    courierAddresses
   ]);
 
   return (
