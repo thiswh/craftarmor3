@@ -296,6 +296,77 @@ const getPickupSummaryLines = (address: ExtendedCustomerAddress) => {
   return lines;
 };
 
+const getPickupIdentity = (address?: any) => {
+  const meta = getPickupMetaFromAddress(address);
+  if (!meta) {
+    return null;
+  }
+  const pickupData = meta.pickup_data as Record<string, string> | null;
+  const pointId =
+    meta.pickup_point_id ?? (pickupData?.id ? Number(pickupData.id) : null);
+  const externalId = meta.pickup_external_id ?? pickupData?.external_id ?? null;
+  const service =
+    meta.pickup_service_code ?? pickupData?.service_code ?? 'cdek';
+  return { pointId, externalId, service };
+};
+
+const isPickupAddressMatch = (left?: any, right?: any) => {
+  const leftMeta = getPickupIdentity(left);
+  const rightMeta = getPickupIdentity(right);
+  if (leftMeta && rightMeta) {
+    if (leftMeta.pointId && rightMeta.pointId) {
+      return leftMeta.pointId === rightMeta.pointId;
+    }
+    if (
+      leftMeta.externalId &&
+      rightMeta.externalId &&
+      leftMeta.service === rightMeta.service
+    ) {
+      return leftMeta.externalId === rightMeta.externalId;
+    }
+  }
+  return isCourierAddressMatch(left, right);
+};
+
+const normalizeAddressValue = (value?: string | null) =>
+  String(value || '').trim().toLowerCase();
+
+const getCourierIdentity = (address?: any) => ({
+  address1: address?.address1 || address?.address_1 || '',
+  address2: address?.address2 || address?.address_2 || '',
+  city: address?.city || '',
+  province:
+    address?.province?.code ||
+    address?.province?.name ||
+    address?.province ||
+    '',
+  country:
+    address?.country?.code ||
+    address?.country?.name ||
+    address?.country ||
+    '',
+  postcode: address?.postcode || ''
+});
+
+const isCourierAddressMatch = (left?: any, right?: any) => {
+  const leftMeta = getCourierIdentity(left);
+  const rightMeta = getCourierIdentity(right);
+  return (
+    normalizeAddressValue(leftMeta.address1) ===
+      normalizeAddressValue(rightMeta.address1) &&
+    normalizeAddressValue(leftMeta.address2) ===
+      normalizeAddressValue(rightMeta.address2) &&
+    normalizeAddressValue(leftMeta.city) ===
+      normalizeAddressValue(rightMeta.city) &&
+    normalizeAddressValue(leftMeta.province) ===
+      normalizeAddressValue(rightMeta.province) &&
+    normalizeAddressValue(leftMeta.country) ===
+      normalizeAddressValue(rightMeta.country) &&
+    normalizeAddressValue(leftMeta.postcode) ===
+      normalizeAddressValue(rightMeta.postcode)
+  );
+};
+
 const sortAddressesBySelection = (
   addresses: ExtendedCustomerAddress[],
   selectedKey?: string
@@ -924,10 +995,7 @@ export function Shipment() {
     }
   }, [courierAddresses, selectedCourierAddressId]);
 
-  const summaryAddress =
-    deliveryType === 'pickup'
-      ? selectedPickupAddress || shippingAddress
-      : selectedCourierAddress || shippingAddress;
+  const summaryAddress = shippingAddress;
   const pickupSummaryData =
     deliveryType === 'pickup' ? getPickupMetaFromAddress(summaryAddress as any) : null;
 
@@ -984,6 +1052,7 @@ export function Shipment() {
     if (isApplyingShipment) {
       return false;
     }
+    let addressApplied = false;
     try {
       setIsApplyingShipment(true);
       const validate = await form.trigger('shippingAddress');
@@ -1000,7 +1069,7 @@ export function Shipment() {
       }
 
       await addShippingAddress(updatedShippingAddress);
-      updateCheckoutData({ shippingAddress: updatedShippingAddress });
+      addressApplied = true;
       await addShippingMethod(method.code, method.name);
       updateCheckoutData({
         shippingAddress: updatedShippingAddress,
@@ -1008,6 +1077,14 @@ export function Shipment() {
       });
       return true;
     } catch (error) {
+      if (addressApplied) {
+        await clearShippingSelection();
+        updateCheckoutData({ shippingAddress: null, shippingMethod: null });
+        clearDeliveryAddressFields();
+        setSelectedPickupAddressId('');
+        setSelectedCourierAddressId('');
+        setSelectedPointId(undefined);
+      }
       toast.error(
         error instanceof Error ? error.message : _('Failed to update shipment')
       );
@@ -1638,6 +1715,10 @@ export function Shipment() {
                             const addressId = getAddressKey(address);
                             const isSelected =
                               addressId !== '' && addressId === selectedPickupAddressId;
+                            const isApplied =
+                              cart?.shippingMethod === PICKUP_METHOD_ID &&
+                              (address.isDefault ||
+                                isPickupAddressMatch(address, shippingAddress));
                             return (
                               <div
                                 key={address.uuid}
@@ -1799,7 +1880,7 @@ export function Shipment() {
                                     )}
                                   </div>
                                 </div>
-                                {isSelected ? (
+                                {isSelected && !isApplied ? (
                                   <div className="mt-4">
                                     <button
                                       type="button"
@@ -1835,6 +1916,10 @@ export function Shipment() {
                             const addressId = getAddressKey(address);
                             const isSelected =
                               addressId !== '' && addressId === selectedCourierAddressId;
+                            const isApplied =
+                              cart?.shippingMethod === COURIER_METHOD_ID &&
+                              (address.isDefault ||
+                                isCourierAddressMatch(address, shippingAddress));
                             return (
                               <div
                                 key={address.uuid}
@@ -1981,7 +2066,7 @@ export function Shipment() {
                                   </button>
                                   <DeliveryAddressSummary address={address} />
                                 </div>
-                                {isSelected ? (
+                                {isSelected && !isApplied ? (
                                   <div className="mt-4">
                                     <button
                                       type="button"
