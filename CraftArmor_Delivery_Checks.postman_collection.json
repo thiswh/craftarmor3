@@ -1,0 +1,147 @@
+{
+	"info": {
+		"_postman_id": "craftarmor-delivery-checks",
+		"name": "CraftArmor Delivery Checks",
+		"description": "Postman checks for delivery changes",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Delivery Calculate",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 or 400\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+							"});",
+							"",
+							"if (pm.response.code === 200) {",
+							"    pm.test(\"Response has success:true\", function () {",
+							"        var jsonData = pm.response.json();",
+							"        pm.expect(jsonData.success).to.eql(true);",
+							"    });",
+							"}",
+							"",
+							"if (pm.response.code === 400) {",
+							"    pm.test(\"Response has error message\", function () {",
+							"        var jsonData = pm.response.json();",
+							"        pm.expect(jsonData).to.have.property('message').or.have.property('error');",
+							"    });",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"pointId\": 419,\n  \"serviceCode\": \"cdek\",\n  \"pointData\": {\n    \"postal_code\": \"109202\",\n    \"city\": \"Moscow\",\n    \"address\": \"Pervoskoye sh., 16/2\",\n    \"region\": \"Moscow\",\n    \"service_code\": \"cdek\"\n  }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:3000/api/delivery/calculate",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"api",
+						"delivery",
+						"calculate"
+					]
+				},
+				"description": "Delivery calculate (requires session cookie, no body dimensions)\n\nExpected:\n- 200 with success:true if cart has total_weight/total_length/total_width/total_height.\n- 400 with a clear error message if cookie or cart data is missing."
+			},
+			"response": []
+		},
+		{
+			"name": "2. Shipping Calculate",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 or 400\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+							"});",
+							"",
+							"if (pm.response.code === 200) {",
+							"    pm.test(\"Response has success:true\", function () {",
+							"        var jsonData = pm.response.json();",
+							"        pm.expect(jsonData.success).to.eql(true);",
+							"    });",
+							"}",
+							"",
+							"if (pm.response.code === 400) {",
+							"    pm.test(\"Response has success:false\", function () {",
+							"        var jsonData = pm.response.json();",
+							"        pm.expect(jsonData.success).to.eql(false);",
+							"    });",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:3000/api/shipping/calculate/66db29e2-71e1-4871-a418-a2d660bdf081/d3d16c61-5acf-4cf7-93d9-258e753cd58b",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"api",
+						"shipping",
+						"calculate",
+						"66db29e2-71e1-4871-a418-a2d660bdf081",
+						"d3d16c61-5acf-4cf7-93d9-258e753cd58b"
+					],
+					"variable": [
+						{
+							"key": "cart_uuid",
+							"value": "66db29e2-71e1-4871-a418-a2d660bdf081"
+						},
+						{
+							"key": "shipping_method_uuid",
+							"value": "d3d16c61-5acf-4cf7-93d9-258e753cd58b"
+						}
+					]
+				},
+				"description": "Shipping calculate via calculate_api (returns invalid_items)\n\nExpected:\n- 200 with success:true when cart + address + destination are valid.\n- 200 with success:false + invalid_items when items are missing or have zero weight.\n- 200 with success:false when cart/address/destination/weight is missing."
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "session_cookie",
+			"value": "YOUR_SID_VALUE",
+			"type": "string"
+		}
+	]
+}

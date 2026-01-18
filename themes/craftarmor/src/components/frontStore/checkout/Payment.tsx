@@ -13,7 +13,7 @@ import { toast } from 'react-toastify';
 export function Payment() {
   const { data: cart, loadingStates } = useCartState();
   const { updateCheckoutData } = useCheckoutDispatch();
-  const { form } = useCheckout();
+  const { form, checkoutData } = useCheckout() as any;
   const paymentMethod = useWatch({
     name: 'paymentMethod',
     control: form.control
@@ -23,6 +23,8 @@ export function Payment() {
   const billingAddress = cart?.billingAddress;
   const addingBillingAddress = loadingStates?.addingBillingAddress;
   const hasDelivery = Boolean(cart?.shippingMethod && cart?.shippingAddress);
+  const hasInvalidItems = Boolean(checkoutData?.hasInvalidItems);
+  const canShowPayment = hasDelivery && !hasInvalidItems;
 
   useEffect(() => {
     const updatePaymentMethod = async () => {
@@ -56,7 +58,14 @@ export function Payment() {
           )}
         </div>
       ) : null}
-      <div className={hasDelivery ? '' : 'pointer-events-none opacity-60'}>
+      {hasInvalidItems ? (
+        <div className="mt-1 mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {_(
+            'Remove unavailable items to see available payment methods.'
+          )}
+        </div>
+      ) : null}
+      <div className={canShowPayment ? '' : 'pointer-events-none opacity-60'}>
         <PaymentMethods
           methods={availablePaymentMethods?.map((method) => ({ ...method }))}
           isLoading={addingBillingAddress}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DeliveryMapPicker from '../../../pages/checkout/DeliveryMapPicker.js';
 import {
   useCartDispatch,
@@ -54,6 +54,15 @@ type CustomerRecipient = {
   isDefault?: boolean | null;
   updateApi?: string;
   deleteApi?: string;
+};
+
+type InvalidCartItem = {
+  cart_item_id: number;
+  uuid?: string;
+  product_id?: number;
+  product_name?: string | null;
+  product_sku?: string | null;
+  reason?: string;
 };
 
 const CountriesQuery = `
@@ -374,6 +383,9 @@ export function Shipment() {
   const [selectedCourierAddressId, setSelectedCourierAddressId] = useState<string>('');
   const [selectedRecipientKey, setSelectedRecipientKey] = useState<string>('');
   const [isApplyingShipment, setIsApplyingShipment] = useState(false);
+  const [invalidItems, setInvalidItems] = useState<InvalidCartItem[]>([]);
+  const [invalidItemsLoading, setInvalidItemsLoading] = useState(false);
+  const [isRemovingInvalidItems, setIsRemovingInvalidItems] = useState(false);
   const [orderedPickupAddresses, setOrderedPickupAddresses] = useState<
     ExtendedCustomerAddress[]
   >([]);
@@ -390,6 +402,7 @@ export function Shipment() {
     addShippingAddress,
     addShippingMethod,
     fetchAvailableShippingMethods,
+    removeItem,
     syncCartWithServer
   } = useCartDispatch();
   const { form } = useCheckout();
@@ -496,6 +509,10 @@ export function Shipment() {
   );
 
   const openPanel = (type: DeliveryType) => {
+    if (hasInvalidItems) {
+      toast.error(_('Remove unavailable items before selecting delivery.'));
+      return;
+    }
     setPanelType(type);
     setPanelStep('list');
     setIsPanelOpen(true);
@@ -1267,6 +1284,68 @@ export function Shipment() {
 
   const hasAnyRecipient = pickupAddresses.length > 0 || courierAddresses.length > 0;
   const addressesLoaded = Boolean(customer) && !isCustomerLoading;
+  const hasInvalidItems = invalidItems.length > 0;
+  const cartUpdatedKey = cart?.updatedAt?.value || '';
+
+  const loadInvalidItems = useCallback(async () => {
+    if (!cart?.uuid) {
+      setInvalidItems([]);
+      return;
+    }
+    setInvalidItemsLoading(true);
+    try {
+      const response = await fetch(
+        `/api/shipping/calculate/${cart.uuid}/${PICKUP_METHOD_ID}`
+      );
+      const data = await response.json();
+      const items = data?.data?.invalid_items;
+      if (Array.isArray(items) && items.length > 0) {
+        setInvalidItems(items);
+      } else {
+        setInvalidItems([]);
+      }
+    } catch (error) {
+      console.error('[Shipment] Failed to load invalid items:', error);
+    } finally {
+      setInvalidItemsLoading(false);
+    }
+  }, [cart?.uuid]);
+
+  const handleRemoveInvalidItems = async () => {
+    if (isRemovingInvalidItems || invalidItems.length === 0) {
+      return;
+    }
+    setIsRemovingInvalidItems(true);
+    try {
+      for (const item of invalidItems) {
+        if (!item.cart_item_id) {
+          continue;
+        }
+        await removeItem(String(item.cart_item_id));
+      }
+      await loadInvalidItems();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : _('Failed to remove items')
+      );
+    } finally {
+      setIsRemovingInvalidItems(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!cart?.uuid) {
+      setInvalidItems([]);
+      return;
+    }
+    loadInvalidItems();
+  }, [cart?.uuid, cartUpdatedKey, loadInvalidItems]);
+
+  useEffect(() => {
+    updateCheckoutData({
+      hasInvalidItems: invalidItems.length > 0
+    } as any);
+  }, [invalidItems.length, updateCheckoutData]);
 
   useEffect(() => {
     if (!addressesLoaded) {
@@ -1333,10 +1412,38 @@ export function Shipment() {
     <div className="checkout-delivery">
       <h3>{_('Delivery')}</h3>
 
+      {invalidItems.length > 0 && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <div className="font-medium">
+            {_('Some items are unavailable or missing weight.')}
+          </div>
+          <ul className="mt-2 space-y-1 text-sm text-red-700">
+            {invalidItems.map((item) => (
+              <li key={item.uuid || String(item.cart_item_id)}>
+                {item.product_name || _('Unknown item')}
+                {item.product_sku ? ` (${item.product_sku})` : ''}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3">
+            <button
+              type="button"
+              className="inline-flex items-center rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
+              onClick={handleRemoveInvalidItems}
+              disabled={isRemovingInvalidItems || invalidItemsLoading}
+            >
+              {isRemovingInvalidItems
+                ? _('Removing...')
+                : _('Remove items')}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         className={`rounded-lg bg-white ${
           deliverySummaryLines.length > 0 ? 'border p-4' : ''
-        }`}
+        } ${hasInvalidItems ? 'opacity-60' : ''}`}
       >
         {deliverySummaryLines.length > 0 ? (
           <div className="flex items-center gap-3">
@@ -1377,9 +1484,10 @@ export function Shipment() {
             </div>
             <button
               type="button"
-              className="text-gray-400 hover:text-gray-700"
+              className="text-gray-400 hover:text-gray-700 disabled:cursor-not-allowed"
               onClick={() => openPanel(deliveryType)}
               aria-label={_('Change')}
+              disabled={hasInvalidItems}
             >
               <svg
                 className="h-4 w-4"
@@ -1402,6 +1510,7 @@ export function Shipment() {
               type="button"
               className="w-full bg-gray-900 text-white py-3 px-4 rounded-lg font-medium hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => openPanel(deliveryType)}
+              disabled={hasInvalidItems}
             >
               {_('Choose delivery address')}
             </button>

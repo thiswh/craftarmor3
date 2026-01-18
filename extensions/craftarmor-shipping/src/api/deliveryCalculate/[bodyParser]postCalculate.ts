@@ -20,16 +20,7 @@ export default async function postCalculate(request: Request, response: Response
     // Body уже распарсен middleware bodyParser.ts
     const body = request.body || {};
     
-    const {
-      pointId,
-      weight,
-      length,
-      width,
-      height,
-      declaredValue,
-      phoneNumber,
-      pointData
-    } = body;
+    const { pointId, declaredValue, phoneNumber, pointData } = body;
     let serviceCode = body.serviceCode;
 
     // Валидация обязательных параметров
@@ -44,24 +35,8 @@ export default async function postCalculate(request: Request, response: Response
 
     // Валидация веса
     const shopWeightUnit = String(getConfig('shop.weightUnit', 'kg')).toLowerCase();
-    const parseWeightToGrams = (value: unknown): number | undefined => {
-      const num = parseFloat(String(value));
-      if (!Number.isFinite(num) || num <= 0) {
-        return undefined;
-      }
-      return shopWeightUnit === 'g' ? num : num * 1000;
-    };
-
-    let weightGrams = weight !== undefined ? parseWeightToGrams(weight) : undefined;
-    let weightSource: 'body' | 'cart' = weightGrams !== undefined ? 'body' : 'cart';
-
-    const parseDimension = (value: unknown): number | undefined => {
-      if (value === undefined || value === null || value === '') {
-        return undefined;
-      }
-      const num = parseFloat(String(value));
-      return Number.isFinite(num) ? num : undefined;
-    };
+    let weightGrams: number | undefined;
+    let weightSource: 'cart' = 'cart';
 
     // Валидация размеров (если указаны)
 
@@ -135,71 +110,113 @@ export default async function postCalculate(request: Request, response: Response
     }
 
     // Пытаемся получить размеры из корзины (приоритет)
-    let finalLength: number | undefined = parseDimension(length);
-    let finalWidth: number | undefined = parseDimension(width);
-    let finalHeight: number | undefined = parseDimension(height);
+    let finalLength: number | undefined;
+    let finalWidth: number | undefined;
+    let finalHeight: number | undefined;
     const dimensionSources = {
-      length: finalLength !== undefined ? 'body' : 'cart',
-      width: finalWidth !== undefined ? 'body' : 'cart',
-      height: finalHeight !== undefined ? 'body' : 'cart'
+      length: 'cart',
+      width: 'cart',
+      height: 'cart'
     };
 
     try {
       // Получаем имя cookie из конфига (аналогично getFrontStoreSessionCookieName)
       const cookieName = getConfig('system.session.cookieName', 'sid');
-      const sessionID = request.signedCookies?.[cookieName];
+      const sessionID =
+        request.signedCookies?.[cookieName] ?? request.cookies?.[cookieName];
       
-      if (sessionID) {
-        // Получаем cart по sessionID
-        const cart = await getMyCart(sessionID, undefined);
-        if (cart) {
-          const cartLength = cart.getData('total_length');
-          const cartWidth = cart.getData('total_width');
-          const cartHeight = cart.getData('total_height');
-          const cartWeight = cart.getData('total_weight');
-          
-          console.log('[postCalculate] Cart found by sessionID, dimensions from cart:', {
-            total_length: cartLength,
-            total_width: cartWidth,
-            total_height: cartHeight,
-            total_weight: cartWeight
-          });
-          
-          // Используем данные из корзины, если они есть
-          if (cartLength !== null && cartLength !== undefined) {
-            finalLength = parseFloat(String(cartLength));
-            dimensionSources.length = 'cart';
-          }
-          if (cartWidth !== null && cartWidth !== undefined) {
-            finalWidth = parseFloat(String(cartWidth));
-            dimensionSources.width = 'cart';
-          }
-          if (cartHeight !== null && cartHeight !== undefined) {
-            finalHeight = parseFloat(String(cartHeight));
-            dimensionSources.height = 'cart';
-          }
-          if (cartWeight !== null && cartWeight !== undefined) {
-            const cartWeightNum = parseFloat(String(cartWeight));
-            if (Number.isFinite(cartWeightNum) && cartWeightNum > 0) {
-              weightGrams = shopWeightUnit === 'g' ? cartWeightNum : cartWeightNum * 1000;
-              weightSource = 'cart';
-            }
-          }
-        } else {
-          console.log('[postCalculate] Cart not found for sessionID, using body parameters');
-        }
-      } else {
-        console.log('[postCalculate] No sessionID in cookies, using body parameters');
+      if (!sessionID) {
+        response.$body = {
+          success: false,
+          message: 'Session cookie is required to calculate delivery'
+        };
+        response.statusCode = 400;
+        return;
       }
+
+      const cart = await getMyCart(sessionID, undefined);
+      if (!cart) {
+        response.$body = {
+          success: false,
+          message: 'Cart not found for this session'
+        };
+        response.statusCode = 400;
+        return;
+      }
+
+      const cartLength = cart.getData('total_length');
+      const cartWidth = cart.getData('total_width');
+      const cartHeight = cart.getData('total_height');
+      const cartWeight = cart.getData('total_weight');
+      
+      console.log('[postCalculate] Cart found by sessionID, dimensions from cart:', {
+        total_length: cartLength,
+        total_width: cartWidth,
+        total_height: cartHeight,
+        total_weight: cartWeight
+      });
+      
+      if (cartLength === null || cartLength === undefined) {
+        response.$body = {
+          success: false,
+          message: 'Cart length is required for calculation'
+        };
+        response.statusCode = 400;
+        return;
+      }
+      if (cartWidth === null || cartWidth === undefined) {
+        response.$body = {
+          success: false,
+          message: 'Cart width is required for calculation'
+        };
+        response.statusCode = 400;
+        return;
+      }
+      if (cartHeight === null || cartHeight === undefined) {
+        response.$body = {
+          success: false,
+          message: 'Cart height is required for calculation'
+        };
+        response.statusCode = 400;
+        return;
+      }
+      finalLength = parseFloat(String(cartLength));
+      finalWidth = parseFloat(String(cartWidth));
+      finalHeight = parseFloat(String(cartHeight));
+
+      if (cartWeight === null || cartWeight === undefined) {
+        response.$body = {
+          success: false,
+          message: 'Cart weight is required for calculation'
+        };
+        response.statusCode = 400;
+        return;
+      }
+      const cartWeightNum = parseFloat(String(cartWeight));
+      if (!Number.isFinite(cartWeightNum) || cartWeightNum <= 0) {
+        response.$body = {
+          success: false,
+          message: 'Cart weight must be a positive number'
+        };
+        response.statusCode = 400;
+        return;
+      }
+      weightGrams = shopWeightUnit === 'g' ? cartWeightNum : cartWeightNum * 1000;
+      weightSource = 'cart';
     } catch (error) {
-      // Если не удалось получить корзину, используем параметры из body (fallback)
-      console.warn('[postCalculate] Failed to get cart from session, using body parameters:', error);
+      console.warn('[postCalculate] Failed to get cart from session:', error);
+      response.$body = {
+        success: false,
+        message: 'Failed to load cart for delivery calculation'
+      };
+      response.statusCode = 400;
+      return;
     }
 
     if (weightGrams === undefined || !Number.isFinite(weightGrams)) {
       response.$body = {
         success: false,
-        message: 'Weight is required (provide weight in body or ensure cart has total_weight)'
+        message: 'Cart weight is required for calculation'
       };
       response.statusCode = 400;
       return;
@@ -241,11 +258,6 @@ export default async function postCalculate(request: Request, response: Response
 
     const weightKg = weightGrams / 1000;
 
-    console.log('[postCalculate] Dimensions from body:', {
-      length,
-      width,
-      height
-    });
     console.log('[postCalculate] Dimensions source:', dimensionSources, {
       length: finalLength,
       width: finalWidth,

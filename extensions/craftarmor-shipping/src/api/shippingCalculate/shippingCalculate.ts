@@ -76,20 +76,22 @@ export default async function shippingCalculate(
     const methodId = String(request.params.method_id || '');
 
     if (!cartId || !methodId) {
-      response.statusCode = 400;
+      response.statusCode = 200;
       response.$body = {
         success: false,
-        message: 'Required params: cart_id, method_id'
+        message: 'Required params: cart_id, method_id',
+        data: { cost: 0 }
       };
       return;
     }
 
     const serviceCode = METHOD_SERVICE_CODE[methodId];
     if (!serviceCode) {
-      response.statusCode = 400;
+      response.statusCode = 200;
       response.$body = {
         success: false,
-        message: `Unknown method_id: ${methodId}`
+        message: `Unknown method_id: ${methodId}`,
+        data: { cost: 0 }
       };
       return;
     }
@@ -101,31 +103,10 @@ export default async function shippingCalculate(
       .load(pool);
 
     if (!cart) {
-      response.$body = { success: true, data: { cost: 0 } };
-      return;
-    }
-
-    const shippingAddressId = cart.shipping_address_id;
-    if (!shippingAddressId) {
-      response.statusCode = 400;
+      response.statusCode = 200;
       response.$body = {
         success: false,
-        message: 'Shipping address is not selected',
-        data: { cost: 0 }
-      };
-      return;
-    }
-
-    const shippingAddress = await select()
-      .from('cart_address')
-      .where('cart_address_id', '=', shippingAddressId)
-      .load(pool);
-
-    if (!shippingAddress) {
-      response.statusCode = 400;
-      response.$body = {
-        success: false,
-        message: 'Shipping address is not available',
+        message: 'Cart not found for this session',
         data: { cost: 0 }
       };
       return;
@@ -154,31 +135,68 @@ export default async function shippingCalculate(
 
     const items = itemsResult.rows || [];
 
-    const missingItems = items.filter((item) => {
-      if (item.product_exists) {
-        return false;
-      }
-      const hasWeight = toNumber(item.product_weight) > 0;
-      const hasDimensions =
-        toNumber(item.product_length) > 0 ||
-        toNumber(item.product_width) > 0 ||
-        toNumber(item.product_height) > 0;
-      return !hasWeight && !hasDimensions;
-    });
-    if (missingItems.length > 0) {
+    const invalidItems = items
+      .filter((item) => {
+        const productMissing = !item.product_exists;
+        const weightMissing = toNumber(item.product_weight) <= 0;
+        return productMissing || weightMissing;
+      })
+      .map((item) => ({
+        cart_item_id: item.cart_item_id,
+        uuid: item.uuid,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        product_sku: item.product_sku,
+        reason: !item.product_exists ? 'missing_product' : 'missing_weight'
+      }));
+
+    if (invalidItems.length > 0) {
+      response.statusCode = 200;
       response.$body = {
         success: false,
-        message: 'Some items are unavailable.',
+        message: 'Some items are unavailable or missing weight.',
         data: {
-          cost: 0
+          cost: 0,
+          invalid_items: invalidItems
         }
+      };
+      return;
+    }
+
+    const shippingAddressId = cart.shipping_address_id;
+    if (!shippingAddressId) {
+      response.statusCode = 200;
+      response.$body = {
+        success: false,
+        message: 'Shipping address is not selected',
+        data: { cost: 0 }
+      };
+      return;
+    }
+
+    const shippingAddress = await select()
+      .from('cart_address')
+      .where('cart_address_id', '=', shippingAddressId)
+      .load(pool);
+
+    if (!shippingAddress) {
+      response.statusCode = 200;
+      response.$body = {
+        success: false,
+        message: 'Shipping address is not available',
+        data: { cost: 0 }
       };
       return;
     }
 
     const weightKg = getWeightInKg(items);
     if (!Number.isFinite(weightKg) || weightKg <= 0) {
-      response.$body = { success: true, data: { cost: 0 } };
+      response.statusCode = 200;
+      response.$body = {
+        success: false,
+        message: 'Cart weight is required for calculation',
+        data: { cost: 0 }
+      };
       return;
     }
     const weightGrams = Math.round(weightKg * 1000);
@@ -219,10 +237,11 @@ export default async function shippingCalculate(
 
     const senderPostalCode = process.env.SHOP_SENDER_POSTAL || '';
     if (!senderPostalCode) {
-      response.statusCode = 500;
+      response.statusCode = 200;
       response.$body = {
         success: false,
-        message: 'Shop sender postal code not configured'
+        message: 'Shop sender postal code not configured',
+        data: { cost: 0 }
       };
       return;
     }
@@ -237,7 +256,12 @@ export default async function shippingCalculate(
     try {
       if (serviceCode === 'cdek') {
         if (!destination.postalCode && !destination.city) {
-          response.$body = { success: true, data: { cost: 0 } };
+          response.statusCode = 200;
+          response.$body = {
+            success: false,
+            message: 'Destination postal code or city is required',
+            data: { cost: 0 }
+          };
           return;
         }
         const cdekService = CdekService.getInstance();
@@ -260,7 +284,12 @@ export default async function shippingCalculate(
         });
       } else if (serviceCode === 'russianpost') {
         if (!destination.postalCode) {
-          response.$body = { success: true, data: { cost: 0 } };
+          response.statusCode = 200;
+          response.$body = {
+            success: false,
+            message: 'Destination postal code is required',
+            data: { cost: 0 }
+          };
           return;
         }
         const ruspostService = new RussianPostService();
@@ -272,7 +301,12 @@ export default async function shippingCalculate(
         });
       } else {
         if (!destination.city) {
-          response.$body = { success: true, data: { cost: 0 } };
+          response.statusCode = 200;
+          response.$body = {
+            success: false,
+            message: 'Destination city is required',
+            data: { cost: 0 }
+          };
           return;
         }
         const boxberryService = new BoxberryService();
