@@ -1,0 +1,13 @@
+    } else {
+      if (preferredModes.length > 0) {
+        const filteredTariffs = filterByModes(tariffs);
+        const sortedTariffs = (filteredTariffs.length > 0 ? filteredTariffs : tariffs).sort(
+          (a: any, b: any) => {
+            const costA = a.delivery_sum ?? a.total_sum ?? 0;
+            const costB = b.delivery_sum ?? b.total_sum ?? 0;
+            return costA - costB;
+          }
+        );
+        tariff = sortedTariffs[0];
+      
+      }

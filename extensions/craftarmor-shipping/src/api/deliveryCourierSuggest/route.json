@@ -1,0 +1,5 @@
+{
+  "methods": ["POST"],
+  "path": "/delivery/courier/suggest",
+  "access": "public"
+}

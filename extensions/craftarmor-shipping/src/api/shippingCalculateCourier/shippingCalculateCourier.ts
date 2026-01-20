@@ -3,17 +3,12 @@ import { select } from '@evershop/postgres-query-builder';
 import { getConfig } from '@evershop/evershop/lib/util/getConfig';
 import { pool } from '@evershop/evershop/lib/postgres';
 import { CdekService } from '../../services/cdek/CdekService.js';
-import { RussianPostService } from '../../services/russianpost/RussianPostService.js';
-import { BoxberryService } from '../../services/boxberry/BoxberryService.js';
 import {
   calculateCartDimensions,
   DEFAULT_CART_DIMENSIONS
 } from '../../services/cartDimensions.js';
 
-const METHOD_SERVICE_CODE: Record<string, 'cdek' | 'russianpost' | 'boxberry'> =
-  {
-    'd3d16c61-5acf-4cf7-93d9-258e753cd58b': 'cdek'
-  };
+const COURIER_METHOD_UUID = '1ad1dde4-0b52-4fb9-965f-8c3b5be739e7';
 
 const toNumber = (value: unknown): number => {
   const parsed = parseFloat(String(value));
@@ -49,25 +44,19 @@ const getWeightInKg = (
   return grams / 1000;
 };
 
-const getPickupData = (shippingAddress: any) => {
-  const raw = shippingAddress?.pickup_data ?? shippingAddress?.pickupData;
-  if (!raw) {
-    return null;
+const normalizeDeliveryType = (value: any) =>
+  value === 'pickup' ? 'pickup' : 'courier';
+
+const buildAddressLine = (primary?: string, secondary?: string) => {
+  const trimmedPrimary = String(primary || '').trim();
+  const trimmedSecondary = String(secondary || '').trim();
+  if (trimmedPrimary && trimmedSecondary) {
+    return `${trimmedPrimary}, ${trimmedSecondary}`;
   }
-  if (typeof raw === 'string') {
-    try {
-      return JSON.parse(raw);
-    } catch (error) {
-      return null;
-    }
-  }
-  if (typeof raw === 'object') {
-    return raw;
-  }
-  return null;
+  return trimmedPrimary || trimmedSecondary;
 };
 
-export default async function shippingCalculate(
+export default async function shippingCalculateCourier(
   request: Request,
   response: Response
 ) {
@@ -85,8 +74,7 @@ export default async function shippingCalculate(
       return;
     }
 
-    const serviceCode = METHOD_SERVICE_CODE[methodId];
-    if (!serviceCode) {
+    if (methodId !== COURIER_METHOD_UUID) {
       response.statusCode = 200;
       response.$body = {
         success: false,
@@ -189,8 +177,6 @@ export default async function shippingCalculate(
       return;
     }
 
-    const normalizeDeliveryType = (value: any) =>
-      value === 'pickup' ? 'pickup' : 'courier';
     const pickupMeta =
       shippingAddress.pickup_point_id ||
       shippingAddress.pickupPointId ||
@@ -205,8 +191,8 @@ export default async function shippingCalculate(
       : pickupMeta
         ? 'pickup'
         : 'courier';
-    const methodDeliveryType = serviceCode === 'cdek' ? 'pickup' : 'courier';
-    if (addressDeliveryType !== methodDeliveryType) {
+
+    if (addressDeliveryType !== 'courier') {
       response.statusCode = 200;
       response.$body = {
         success: false,
@@ -239,30 +225,39 @@ export default async function shippingCalculate(
       DEFAULT_CART_DIMENSIONS
     );
 
-    const pickupData = getPickupData(shippingAddress);
+    const destinationAddress = buildAddressLine(
+      shippingAddress.address_1 || shippingAddress.address1,
+      shippingAddress.address_2 || shippingAddress.address2
+    );
     const destination = {
-      postalCode:
-        pickupData?.postal_code ||
-        pickupData?.postalCode ||
-        shippingAddress.postcode ||
-        shippingAddress.postal_code ||
-        '',
-      city:
-        pickupData?.city ||
-        toText(shippingAddress.city),
-      address:
-        pickupData?.address ||
-        shippingAddress.address_1 ||
-        shippingAddress.address1 ||
-        '',
-      region:
-        pickupData?.region ||
-        toText(shippingAddress.province) ||
-        shippingAddress.region ||
-        ''
+      postalCode: shippingAddress.postcode || shippingAddress.postal_code || '',
+      city: toText(shippingAddress.city),
+      address: destinationAddress,
+      region: toText(shippingAddress.province) || shippingAddress.region || ''
     };
 
+    if (!destination.postalCode) {
+      response.statusCode = 200;
+      response.$body = {
+        success: false,
+        message: 'Destination postal code is required',
+        data: { cost: 0 }
+      };
+      return;
+    }
+
+    if (!destination.address) {
+      response.statusCode = 200;
+      response.$body = {
+        success: false,
+        message: 'Destination address is required',
+        data: { cost: 0 }
+      };
+      return;
+    }
+
     const senderPostalCode = process.env.SHOP_SENDER_POSTAL || '';
+    const senderCity = process.env.SHOP_SENDER_CITY || '';
     if (!senderPostalCode) {
       response.statusCode = 200;
       response.$body = {
@@ -273,6 +268,10 @@ export default async function shippingCalculate(
       return;
     }
 
+    const tariffCodeRaw = process.env.CDEK_COURIER_TARIFF_CODE || '';
+    const tariffCode = parseInt(tariffCodeRaw, 10);
+    const hasTariffCode = Number.isFinite(tariffCode) && tariffCode > 0;
+
     let result: {
       cost: number;
       currency: string;
@@ -281,69 +280,36 @@ export default async function shippingCalculate(
     };
 
     try {
-      if (serviceCode === 'cdek') {
-        if (!destination.postalCode && !destination.city) {
-          response.statusCode = 200;
-          response.$body = {
-            success: false,
-            message: 'Destination postal code or city is required',
-            data: { cost: 0 }
-          };
-          return;
-        }
-        const cdekService = CdekService.getInstance();
-        result = await cdekService.calculateDelivery({
-          fromLocation: { postalCode: senderPostalCode },
-          toLocation: {
-            postalCode: destination.postalCode || undefined,
-            city: destination.city || undefined,
-            address: destination.address || undefined,
-            region: destination.region || undefined
-          },
-          packages: [
-            {
-              weight: weightGrams,
-              length,
-              width,
-              height
-            }
-          ]
-        });
-      } else if (serviceCode === 'russianpost') {
-        if (!destination.postalCode) {
-          response.statusCode = 200;
-          response.$body = {
-            success: false,
-            message: 'Destination postal code is required',
-            data: { cost: 0 }
-          };
-          return;
-        }
-        const ruspostService = new RussianPostService();
-        result = await ruspostService.calculateDelivery({
-          fromPostalCode: senderPostalCode,
-          toPostalCode: destination.postalCode,
-          weight: weightGrams,
-          mailType: 2
-        });
-      } else {
-        if (!destination.city) {
-          response.statusCode = 200;
-          response.$body = {
-            success: false,
-            message: 'Destination city is required',
-            data: { cost: 0 }
-          };
-          return;
-        }
-        const boxberryService = new BoxberryService();
-        result = await boxberryService.calculateDelivery({
-          toCity: destination.city,
-          weight: weightKg
-        });
+      const cdekService = CdekService.getInstance();
+      const calcParams: any = {
+        fromLocation: {
+          postalCode: senderPostalCode,
+          city: senderCity || undefined
+        },
+        toLocation: {
+          postalCode: destination.postalCode,
+          city: destination.city || undefined,
+          address: destination.address,
+          region: destination.region || undefined
+        },
+        packages: [
+          {
+            weight: weightGrams,
+            length,
+            width,
+            height
+          }
+        ],
+        deliveryModes: [3]
+      };
+
+      if (hasTariffCode) {
+        calcParams.tariffCode = tariffCode;
       }
+
+      result = await cdekService.calculateDelivery(calcParams);
     } catch (calcError: any) {
-      console.error('[shippingCalculate] Calculation error:', calcError);
+      console.error('[shippingCalculateCourier] Calculation error:', calcError);
       response.statusCode = 200;
       response.$body = {
         success: false,
@@ -367,7 +333,7 @@ export default async function shippingCalculate(
       }
     };
   } catch (error: any) {
-    console.error('[shippingCalculate] Error:', error);
+    console.error('[shippingCalculateCourier] Error:', error);
     response.$body = {
       success: false,
       message: 'Internal server error',

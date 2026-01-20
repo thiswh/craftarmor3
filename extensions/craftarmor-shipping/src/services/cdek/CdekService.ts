@@ -144,10 +144,16 @@ export class CdekService {
    * Расчет стоимости доставки
    */
   async calculateDelivery(params: {
-    fromLocation: { postalCode: string };
+    fromLocation: {
+      postalCode: string;
+      city?: string;
+      address?: string;
+      region?: string;
+    };
     toLocation: { postalCode?: string; city?: string; address?: string; region?: string };
     packages: Array<{ weight: number; length?: number; width?: number; height?: number }>;
     tariffCode?: number;
+    deliveryModes?: number[];
     declaredValue?: number; // Объявленная стоимость заказа (рубли)
     phoneNumber?: string; // Номер телефона для SMS уведомления
   }): Promise<{
@@ -202,6 +208,19 @@ export class CdekService {
         height: Math.round(pkg.height || 10),
       })),
     };
+
+    if (params.fromLocation.city) {
+      requestBody.from_location.city = params.fromLocation.city;
+    }
+
+    if (params.fromLocation.region) {
+      requestBody.from_location.region = params.fromLocation.region;
+    }
+
+    if (params.fromLocation.address) {
+      requestBody.from_location.address = params.fromLocation.address;
+    }
+
 
     // Добавляем tariff_code только если указан (опциональный параметр)
     if (params.tariffCode) {
@@ -302,7 +321,7 @@ export class CdekService {
             status: item.status
           }));
       } else {
-        // Для tarifflist используем элементы как есть
+        // ??? tarifflist ?????????? ???????? ??? ????
         tariffs = data.tariff_codes;
       }
     } else if (data.tariffs && Array.isArray(data.tariffs)) {
@@ -320,74 +339,55 @@ export class CdekService {
     }
 
     // Выбираем тариф из списка
+
+    const preferredModes = (params.deliveryModes || [])
+      .map((mode) => parseInt(String(mode), 10))
+      .filter((mode) => Number.isFinite(mode));
+
+    const filterByModes = (list: any[]) => {
+      if (preferredModes.length === 0) {
+        return list;
+      }
+      return list.filter((item: any) => {
+        const mode = parseInt(String(item.delivery_mode), 10);
+        return preferredModes.includes(mode);
+      });
+    };
     let tariff: any;
-    
-    if (hasServices) {
-      // Для tariffAndService выбираем самый дешевый тариф (по total_sum, который уже включает услуги)
-      const sortedTariffs = tariffs.sort((a: any, b: any) => {
-        const costA = a.total_sum ?? a.delivery_sum ?? 0;
-        const costB = b.total_sum ?? b.delivery_sum ?? 0;
+
+    const pickCheapest = (list: any[], preferTotal: boolean) => {
+      if (!list || list.length === 0) {
+        return null;
+      }
+      const sorted = list.sort((a: any, b: any) => {
+        const costA = preferTotal
+          ? (a.total_sum ?? a.delivery_sum ?? 0)
+          : (a.delivery_sum ?? a.total_sum ?? 0);
+        const costB = preferTotal
+          ? (b.total_sum ?? b.delivery_sum ?? 0)
+          : (b.delivery_sum ?? b.total_sum ?? 0);
         return costA - costB;
       });
-      tariff = sortedTariffs[0];
+      return sorted[0];
+    };
+
+    if (hasServices) {
+      const filtered = filterByModes(tariffs);
+      tariff = pickCheapest(filtered.length > 0 ? filtered : tariffs, true);
+    } else if (preferredModes.length > 0) {
+      const filtered = filterByModes(tariffs);
+      tariff = pickCheapest(filtered.length > 0 ? filtered : tariffs, false);
     } else {
-      // Для tarifflist выбираем тариф для ПВЗ (пункта выдачи)
-      // delivery_mode значения для ПВЗ (отправка со склада):
-      //   4 = склад-склад (основной вариант - склад отправителя → склад/ПВЗ получателя)
-      //   7 = склад-постамат (альтернатива - склад отправителя → постамат/ПВЗ получателя)
-      //
-      // Типы тарифов (по приоритету от дешевого к дорогому):
-      //   1. "Посылка" - обычная посылка (самый дешевый, ~345 руб для Москвы)
-      //   2. "Экспресс" - экспресс доставка (средняя скорость, ~740 руб)
-      //   3. "Супер-экспресс" - быстрая доставка (дороже, от 1660 руб)
-      //   Примечание: "Магистральный экспресс" исключен (для больших грузов)
-      const pvzDeliveryModes = [4, 7]; // Режимы для отправки со склада к ПВЗ
-      
-      // Фильтруем тарифы, подходящие для ПВЗ
-      // Исключаем магистральный экспресс (для больших грузов)
+      const pvzDeliveryModes = [4, 7];
       const pvzTariffs = tariffs.filter((t: any) => {
-        const isPvzMode = pvzDeliveryModes.includes(t.delivery_mode);
-        const isMagistral = (t.tariff_name || '').toLowerCase().includes('магистральный');
-        return isPvzMode && !isMagistral;
+        const mode = parseInt(String(t.delivery_mode), 10);
+        return pvzDeliveryModes.includes(mode);
       });
-      
-      if (pvzTariffs.length > 0) {
-        // Группируем тарифы по типам для лучшего выбора
-        // Приоритет: Посылка > Экспресс > Супер-экспресс
-        // Магистральный исключен (для больших грузов)
-        const tariffPriority = (tariffName: string): number => {
-          const name = tariffName.toLowerCase();
-          if (name.includes('посылка')) return 1; // Самый приоритетный (дешевый)
-          if (name.includes('экспресс') && !name.includes('супер')) return 2;
-          if (name.includes('супер-экспресс')) return 3;
-          return 4; // Остальные
-        };
-        
-        // Сортируем: сначала по приоритету типа тарифа, затем по цене
-        const sortedTariffs = pvzTariffs.sort((a: any, b: any) => {
-          const priorityA = tariffPriority(a.tariff_name || '');
-          const priorityB = tariffPriority(b.tariff_name || '');
-          
-          if (priorityA !== priorityB) {
-            return priorityA - priorityB; // Сначала по типу (приоритету)
-          }
-          
-          // Если одинаковый тип, сортируем по цене
-          const costA = a.delivery_sum || a.total_sum || 0;
-          const costB = b.delivery_sum || b.total_sum || 0;
-          return costA - costB;
-        });
-        
-        // Выбираем первый (самый дешевый из приоритетных)
-        tariff = sortedTariffs[0];
-      } else {
-        // Если нет подходящих тарифов для ПВЗ, берем первый доступный
-        tariff = tariffs[0];
-      }
+
+      const candidates = pvzTariffs.length > 0 ? pvzTariffs : tariffs;
+      tariff = pickCheapest(candidates, false) || tariffs[0];
     }
-    
-    // Проверяем наличие обязательных полей
-    // Для tariffAndService используем total_sum (уже включает услуги), для tarifflist - delivery_sum или total_sum
+
     const totalSum = hasServices ? (tariff.total_sum ?? tariff.delivery_sum) : (tariff.delivery_sum ?? tariff.total_sum);
     
     if (totalSum === undefined || totalSum === null) {
@@ -406,4 +406,3 @@ export class CdekService {
     };
   }
 }
-

@@ -419,18 +419,26 @@ export default function DeliveryMapPicker({
           })
         });
 
-        if (!calcResponse.ok) {
-          throw new Error('Failed to calculate delivery cost');
-        }
+        const calcData = await calcResponse.json().catch(() => null);
 
-        const calcData = await calcResponse.json();
+        if (!calcResponse.ok) {
+          const message =
+            calcData?.message ||
+            calcData?.error?.message ||
+            'Failed to calculate delivery cost';
+          throw new Error(message);
+        }
 
         if (!isMountedRef.current || latestDetailPointRef.current !== pointId) {
           return;
         }
 
         if (!calcData.success || !calcData.data || !calcData.data.calculation) {
-          throw new Error(calcData.message || 'Calculation failed');
+          throw new Error(
+            calcData?.message ||
+              calcData?.error?.message ||
+              'Calculation failed'
+          );
         }
 
         const calculation: DeliveryCalculation = {
@@ -479,12 +487,16 @@ export default function DeliveryMapPicker({
     [cartHeight, cartLength, cartWeight, cartWidth, dimensionsKey]
   );
 
+  const resetDetailErrors = useCallback(() => {
+    setError(null);
+    setDetailError(null);
+  }, []);
+
   const handleMarkerClick = useCallback(
     (point: DeliveryPoint) => {
       setActivePointId(point.id);
       setOpenedPointId(point.id);
-      setError(null);
-      setDetailError(null);
+      resetDetailErrors();
       setPointDetails((prev) => {
         const existingData = prev.get(point.id);
         if (!existingData) {
@@ -493,7 +505,7 @@ export default function DeliveryMapPicker({
         return prev;
       });
     },
-    [loadPointDetailAndCalculate]
+    [loadPointDetailAndCalculate, resetDetailErrors]
   );
 
   useEffect(() => {
@@ -664,8 +676,7 @@ export default function DeliveryMapPicker({
 
   const handlePointListSelect = (point: DeliveryPoint) => {
     setIsMapActive(true);
-    setError(null);
-    setDetailError(null);
+    resetDetailErrors();
     handleMarkerClick(point);
     if (mapRef.current) {
       mapRef.current.getMap().flyTo({
