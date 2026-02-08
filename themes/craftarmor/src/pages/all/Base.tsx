@@ -125,6 +125,7 @@ export const query = `
         postcode
         isDefault
         deliveryType
+        courierNote
         pickupPointId
         pickupServiceCode
         pickupExternalId

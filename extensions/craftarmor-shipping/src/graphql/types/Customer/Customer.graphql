@@ -4,6 +4,7 @@ extend type CustomerAddress {
   pickupServiceCode: String
   pickupExternalId: String
   pickupData: JSON
+  courierNote: String
 }
 
 type CustomerRecipient {

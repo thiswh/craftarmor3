@@ -8,6 +8,7 @@ import { CheckoutButton } from '@components/frontStore/checkout/CheckoutButton.j
 import { CheckoutProvider } from '@components/frontStore/checkout/CheckoutContext.js';
 import { ContactInformation } from '@components/frontStore/checkout/ContactInformation.js';
 import { Payment } from '@components/frontStore/checkout/Payment.js';
+import { OrderComment } from '@components/frontStore/checkout/OrderComment.js';
 import { Shipment } from '@components/frontStore/checkout/Shipment.js';
 import { useCustomer } from '@components/frontStore/customer/CustomerContext.jsx';
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
@@ -34,6 +35,7 @@ function CheckoutContent() {
       {isLoggedIn ? (
         <>
           <Shipment />
+          <OrderComment />
           <Payment />
           {hasDelivery ? <CheckoutButton /> : null}
         </>

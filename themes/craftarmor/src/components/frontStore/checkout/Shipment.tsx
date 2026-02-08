@@ -247,7 +247,8 @@ const mapCustomerAddressToForm = (address: ExtendedCustomerAddress) => ({
   city: address.city || '',
   province: address.province?.code || address.province?.name || '',
   country: address.country?.code || '',
-  postcode: address.postcode || ''
+  postcode: address.postcode || '',
+  courier_note: (address as any).courierNote || (address as any).courier_note || ''
 });
 
 const getPickupMetaFromAddress = (address?: ExtendedCustomerAddress | null) => {
@@ -297,6 +298,50 @@ const getPickupSummaryLines = (address: ExtendedCustomerAddress) => {
   }
   if (detailLine) {
     lines.push(detailLine);
+  }
+  if (lines.length === 0 && address1) {
+    lines.push(address1);
+  }
+  return lines;
+};
+
+const getCourierSummaryLines = (address: ExtendedCustomerAddress) => {
+  const address1 = address.address1 || (address as any).address_1 || '';
+  const address2 = address.address2 || (address as any).address_2 || '';
+  const courierNote =
+    (address as any).courierNote || (address as any).courier_note || '';
+  const city = address.city || '';
+  const province =
+    address.province?.code ||
+    address.province?.name ||
+    address.province ||
+    '';
+  const postcode = address.postcode || '';
+
+  const locationParts: string[] = [];
+  if (province && province !== city) {
+    locationParts.push(province);
+  }
+  if (city) {
+    locationParts.push(city);
+  }
+  const locationLine = locationParts.join(', ');
+
+  const detailParts = [locationLine, address1, postcode].filter(Boolean);
+  const detailLine = detailParts.join(', ');
+
+  const lines: string[] = [];
+  if (address1) {
+    lines.push(address1);
+  }
+  if (detailLine) {
+    lines.push(detailLine);
+  }
+  if (address2) {
+    lines.push(address2);
+  }
+  if (courierNote) {
+    lines.push(`${_('Courier note')}: ${courierNote}`);
   }
   if (lines.length === 0 && address1) {
     lines.push(address1);
@@ -375,6 +420,27 @@ const isCourierAddressMatch = (left?: any, right?: any) => {
   );
 };
 
+const SUGGEST_CACHE_TTL_MS = 5 * 60 * 1000;
+const GEO_CACHE_TTL_MS = 10 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 200;
+const COURIER_FOCUS_ZOOM = 16;
+
+const buildGeoCacheKey = (lat: number, lng: number, decimals = 5) => {
+  const roundedLat = Number(lat.toFixed(decimals));
+  const roundedLng = Number(lng.toFixed(decimals));
+  return `${roundedLat},${roundedLng}`;
+};
+
+const pruneCache = <T,>(cache: Map<string, { ts: number; data: T }>) => {
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const firstKey = cache.keys().next().value as string | undefined;
+    if (!firstKey) {
+      break;
+    }
+    cache.delete(firstKey);
+  }
+};
+
 const isSameCourierMapPoint = (
   left?: CourierMapMarker | null,
   right?: CourierMapMarker | null
@@ -420,6 +486,39 @@ const buildCourierAddressLine2 = (data: Record<string, any>) => {
     parts.push(`room ${data.room}`);
   }
   return parts.join(', ');
+};
+
+const buildCourierAccessLine = (
+  entrance?: string,
+  floor?: string,
+  intercom?: string
+) => {
+  const parts: string[] = [];
+  if (entrance) {
+    parts.push(`подъезд ${entrance}`);
+  }
+  if (floor) {
+    parts.push(`этаж ${floor}`);
+  }
+  if (intercom) {
+    parts.push(`домофон ${intercom}`);
+  }
+  return parts.join(' / ');
+};
+
+const buildCourierAddress2 = (
+  baseLine2?: string,
+  flatLabel?: string,
+  entrance?: string,
+  floor?: string,
+  intercom?: string
+) => {
+  const base = [baseLine2, flatLabel].filter(Boolean).join(', ');
+  const accessLine = buildCourierAccessLine(entrance, floor, intercom);
+  if (base && accessLine) {
+    return `${base} / ${accessLine}`;
+  }
+  return base || accessLine;
 };
 
 const formatCourierFlatLabel = (label: string, value: string) => {
@@ -475,6 +574,28 @@ const extractCourierCity = (data: Record<string, any>) =>
 
 const extractCourierRegion = (data: Record<string, any>) =>
   data.region_with_type || data.region || '';
+
+const extractCdekErrorCode = (message: string) => {
+  if (!message) {
+    return '';
+  }
+  const match = message.match(/"code"\s*:\s*"([^"]+)"/);
+  return match ? match[1] : '';
+};
+
+const formatCourierCalcError = (message: string) => {
+  const code = extractCdekErrorCode(message);
+  const normalized = (message || '').toLowerCase();
+  if (
+    code === 'v2_recipient_location_not_recognized' ||
+    normalized.includes('recipient location is not recognized')
+  ) {
+    return _(
+      'К сожалению, доставку по этому адресу рассчитать не удалось. Уточните город/улицу или выберите другой адрес.'
+    );
+  }
+  return message || _('Failed to calculate delivery cost');
+};
 
 const sortAddressesBySelection = (
   addresses: ExtendedCustomerAddress[],
@@ -580,6 +701,10 @@ export function Shipment() {
   const [selectedCourierAddressLine2, setSelectedCourierAddressLine2] =
     useState('');
   const [courierFlatDraft, setCourierFlatDraft] = useState('');
+  const [courierEntrance, setCourierEntrance] = useState('');
+  const [courierFloor, setCourierFloor] = useState('');
+  const [courierIntercom, setCourierIntercom] = useState('');
+  const [courierNoteDraft, setCourierNoteDraft] = useState('');
   const [isCourierQueryExpanded, setIsCourierQueryExpanded] = useState(false);
   const [courierGeoLoading, setCourierGeoLoading] = useState(false);
   const [courierCost, setCourierCost] = useState<number | null>(null);
@@ -589,6 +714,7 @@ export function Shipment() {
   const [courierMarker, setCourierMarker] = useState<CourierMapMarker | null>(
     null
   );
+  const [courierMapZoom, setCourierMapZoom] = useState<number | null>(null);
   const [orderedPickupAddresses, setOrderedPickupAddresses] = useState<
     ExtendedCustomerAddress[]
   >([]);
@@ -598,6 +724,7 @@ export function Shipment() {
   const defaultRecipientCreatedRef = useRef(false);
   const bodyOverflowRef = useRef<string | null>(null);
   const panelOpenRef = useRef(false);
+  const courierDetailOpenRef = useRef(false);
   const autoAppliedShippingRef = useRef(false);
   const courierSuggestTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const courierQueryInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -605,6 +732,15 @@ export function Shipment() {
     null
   );
   const courierAutoLocateRef = useRef(false);
+  const courierSuggestAbortRef = useRef<AbortController | null>(null);
+  const courierSuggestCacheRef = useRef(
+    new Map<string, { ts: number; data: DaDataSuggestion[] }>()
+  );
+  const courierGeocodeAbortRef = useRef<AbortController | null>(null);
+  const courierGeocodeCacheRef = useRef(
+    new Map<string, { ts: number; data: DaDataSuggestion[] }>()
+  );
+  const courierGeocodeKeyRef = useRef<string | null>(null);
   const courierMapSelectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
@@ -649,6 +785,64 @@ export function Shipment() {
     form.register('shippingAddress.province');
     form.register('shippingAddress.postcode');
     form.register('shippingAddress.country');
+    form.register('shippingAddress.courier_note');
+  }, [form]);
+
+  const resetCourierDraft = useCallback(() => {
+    setCourierQuery('');
+    setCourierSuggestions([]);
+    setCourierSuggestLoading(false);
+    setCourierSuggestError(null);
+    setIsCourierSuggestOpen(false);
+    setIsCourierSuggestionSelected(false);
+    setSelectedCourierSuggestionValue('');
+    setSelectedCourierSuggestionData(null);
+    setSelectedCourierAddressLine2('');
+    setCourierFlatDraft('');
+    setCourierEntrance('');
+    setCourierFloor('');
+    setCourierIntercom('');
+    setCourierNoteDraft('');
+    setCourierCost(null);
+    setCourierCostError(null);
+    setCourierCostLoading(false);
+    setCourierMarker(null);
+    setCourierMapZoom(null);
+    setIsCourierQueryExpanded(false);
+    courierSuggestAbortRef.current?.abort();
+    courierSuggestAbortRef.current = null;
+    courierGeocodeAbortRef.current?.abort();
+    courierGeocodeAbortRef.current = null;
+    if (courierSuggestTimeoutRef.current) {
+      clearTimeout(courierSuggestTimeoutRef.current);
+      courierSuggestTimeoutRef.current = null;
+    }
+    if (courierSuggestCloseTimeout.current) {
+      clearTimeout(courierSuggestCloseTimeout.current);
+      courierSuggestCloseTimeout.current = null;
+    }
+    if (courierMapSelectTimeoutRef.current) {
+      clearTimeout(courierMapSelectTimeoutRef.current);
+      courierMapSelectTimeoutRef.current = null;
+    }
+    courierGeocodeKeyRef.current = null;
+    courierMapLastSelectionRef.current = null;
+    courierAutoLocateRef.current = false;
+    courierSuppressSuggestRef.current = false;
+    const resetField = (field: string) => {
+      form.setValue(`shippingAddress.${field}`, '', {
+        shouldDirty: false,
+        shouldTouch: false,
+        shouldValidate: false
+      });
+    };
+    resetField('address_1');
+    resetField('address_2');
+    resetField('city');
+    resetField('province');
+    resetField('country');
+    resetField('postcode');
+    resetField('courier_note');
   }, [form]);
 
   const shippingAddress = cart?.shippingAddress;
@@ -764,6 +958,7 @@ export function Shipment() {
 
   useEffect(() => {
     const wasOpen = panelOpenRef.current;
+    const openingNow = !wasOpen && isPanelOpen;
     const closedNow = wasOpen && !isPanelOpen;
     if (closedNow) {
       setOrderedPickupAddresses([]);
@@ -771,6 +966,27 @@ export function Shipment() {
     }
 
     if (isPanelOpen && panelStep === 'list') {
+      if (openingNow) {
+        if (panelType === 'pickup') {
+          const appliedPickup =
+            shippingAddress &&
+            pickupAddresses.find((address) =>
+              isPickupAddressMatch(address, shippingAddress)
+            );
+          setSelectedPickupAddressId(
+            appliedPickup ? getAddressKey(appliedPickup) : ''
+          );
+        } else {
+          const appliedCourier =
+            shippingAddress &&
+            courierAddresses.find((address) =>
+              isCourierAddressMatch(address, shippingAddress)
+            );
+          setSelectedCourierAddressId(
+            appliedCourier ? getAddressKey(appliedCourier) : ''
+          );
+        }
+      }
       if (panelType === 'pickup') {
         setOrderedPickupAddresses((prev) => {
           if (prev.length === 0) {
@@ -801,9 +1017,19 @@ export function Shipment() {
     panelType,
     pickupAddresses,
     courierAddresses,
+    shippingAddress,
     selectedPickupAddressId,
     selectedCourierAddressId
   ]);
+
+  useEffect(() => {
+    const isCourierDetailOpen =
+      isPanelOpen && panelType === 'courier' && panelStep === 'detail';
+    if (isCourierDetailOpen && !courierDetailOpenRef.current) {
+      resetCourierDraft();
+    }
+    courierDetailOpenRef.current = isCourierDetailOpen;
+  }, [isPanelOpen, panelStep, panelType, resetCourierDraft]);
 
   const displayPickupAddresses =
     orderedPickupAddresses.length > 0 ? orderedPickupAddresses : pickupAddresses;
@@ -837,7 +1063,6 @@ export function Shipment() {
   };
 
   const handleDeliveryTypeChange = (type: DeliveryType) => {
-    setDeliveryType(type);
     if (isPanelOpen) {
       setPanelType(type);
       setPanelStep('list');
@@ -987,6 +1212,14 @@ export function Shipment() {
     courierHasStreetAndHouse;
 
   useEffect(() => {
+    const nextNote = (watchedShippingAddress as any)?.courier_note || '';
+    if (nextNote !== courierNoteDraft) {
+      setCourierNoteDraft(nextNote);
+    }
+  }, [courierNoteDraft, (watchedShippingAddress as any)?.courier_note]);
+
+
+  useEffect(() => {
     if (selectedRecipientKey) {
       return;
     }
@@ -1092,6 +1325,8 @@ export function Shipment() {
 
   const dirtyFields = form.formState.dirtyFields;
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const courierSuppressSuggestRef = useRef(false);
+  const courierGeocodeRequestRef = useRef(0);
   const lastFetchParamsRef = useRef<{
     country?: string;
     province?: string;
@@ -1197,6 +1432,10 @@ export function Shipment() {
       pickupData?.address || summaryAddress.address1 || summaryAddress.address_1 || '';
     const address2 =
       pickupData?.name || summaryAddress.address2 || summaryAddress.address_2 || '';
+    const courierNote =
+      (summaryAddress as any).courierNote ||
+      (summaryAddress as any).courier_note ||
+      '';
     const city = pickupData?.city || summaryAddress.city || '';
     const province =
       pickupData?.region ||
@@ -1219,11 +1458,26 @@ export function Shipment() {
     const detailLine = detailParts.join(', ');
 
     const lines: string[] = [];
-    if (address2) {
-      lines.push(address2);
-    }
-    if (detailLine) {
-      lines.push(detailLine);
+    if (deliveryType === 'pickup') {
+      if (address2) {
+        lines.push(address2);
+      }
+      if (detailLine) {
+        lines.push(detailLine);
+      }
+    } else {
+      if (address1) {
+        lines.push(address1);
+      }
+      if (detailLine) {
+        lines.push(detailLine);
+      }
+      if (address2) {
+        lines.push(address2);
+      }
+      if (courierNote) {
+        lines.push(`${_('Courier note')}: ${courierNote}`);
+      }
     }
 
     return lines.length > 0 ? lines : [];
@@ -1303,6 +1557,46 @@ export function Shipment() {
     });
   };
 
+  const buildCourierAddress2Value = useCallback(
+    (overrides?: {
+      baseLine2?: string;
+      flatLabel?: string;
+      entrance?: string;
+      floor?: string;
+      intercom?: string;
+    }) => {
+      return buildCourierAddress2(
+        overrides?.baseLine2 ?? selectedCourierAddressLine2,
+        overrides?.flatLabel ?? courierFlatDraft,
+        overrides?.entrance ?? courierEntrance,
+        overrides?.floor ?? courierFloor,
+        overrides?.intercom ?? courierIntercom
+      );
+    },
+    [
+      courierEntrance,
+      courierFlatDraft,
+      courierFloor,
+      courierIntercom,
+      selectedCourierAddressLine2
+    ]
+  );
+
+  const updateCourierAddress2 = useCallback(
+    (overrides?: {
+      baseLine2?: string;
+      flatLabel?: string;
+      entrance?: string;
+      floor?: string;
+      intercom?: string;
+    }) => {
+      const nextAddress2 = buildCourierAddress2Value(overrides);
+      setShippingAddressFields({ address_2: nextAddress2 }, { preserveRecipient: true });
+      return nextAddress2;
+    },
+    [buildCourierAddress2Value, setShippingAddressFields]
+  );
+
   const applyCourierSuggestion = useCallback(
     (suggestion: DaDataSuggestion, options?: { skipMarkerUpdate?: boolean }) => {
       const data = suggestion?.data || {};
@@ -1316,15 +1610,25 @@ export function Shipment() {
       const displayValue = selectedValue
         ? `${selectedValue}${manualFlat ? `, ${manualFlat}` : ''} `
         : '';
-      const mergedAddress2 = [address2, manualFlat].filter(Boolean).join(', ');
       const hasStreet = Boolean(data.street_with_type || data.street);
       const hasHouse = Boolean(data.house || data.house_fias_id);
       if (!hasStreet || !hasHouse) {
+        courierSuppressSuggestRef.current = true;
         setCourierQuery(displayValue);
         setIsCourierSuggestionSelected(false);
         setSelectedCourierSuggestionValue('');
         setSelectedCourierSuggestionData(null);
         setSelectedCourierAddressLine2('');
+        setCourierEntrance('');
+        setCourierFloor('');
+        setCourierIntercom('');
+        updateCourierAddress2({
+          baseLine2: '',
+          flatLabel: '',
+          entrance: '',
+          floor: '',
+          intercom: ''
+        });
         setCourierSuggestions([]);
         setIsCourierSuggestOpen(false);
         setCourierCost(null);
@@ -1337,7 +1641,6 @@ export function Shipment() {
       setShippingAddressFields(
         {
           address_1: address1,
-          address_2: mergedAddress2,
           city,
           province,
           postcode,
@@ -1345,11 +1648,13 @@ export function Shipment() {
         },
         { preserveRecipient: true }
       );
+      courierSuppressSuggestRef.current = true;
       setCourierQuery(displayValue);
       setIsCourierSuggestionSelected(true);
       setSelectedCourierSuggestionValue(selectedValue);
       setSelectedCourierSuggestionData(data);
       setSelectedCourierAddressLine2(address2);
+      updateCourierAddress2({ baseLine2: address2, flatLabel: manualFlat });
       setIsCourierQueryExpanded(true);
       setCourierSuggestions([]);
       setCourierSuggestError(null);
@@ -1366,20 +1671,47 @@ export function Shipment() {
         !options?.skipMarkerUpdate
       ) {
         setCourierMarker({ lat, lng });
+        setCourierMapZoom(COURIER_FOCUS_ZOOM);
       }
     },
-    [courierFlatDraft, resizeCourierQueryInput, setShippingAddressFields]
+    [
+      courierFlatDraft,
+      resizeCourierQueryInput,
+      setShippingAddressFields,
+      updateCourierAddress2
+    ]
   );
 
   const loadCourierSuggestions = useCallback(async (query: string) => {
-    setCourierSuggestLoading(true);
-    setCourierSuggestError(null);
     try {
       const { baseQuery } = splitCourierQuery(query);
+      const normalizedQuery = baseQuery.trim().toLowerCase();
+      if (!normalizedQuery) {
+        setCourierSuggestions([]);
+        setCourierSuggestLoading(false);
+        setCourierSuggestError(null);
+        return;
+      }
+      const cacheEntry = courierSuggestCacheRef.current.get(normalizedQuery);
+      if (cacheEntry && Date.now() - cacheEntry.ts < SUGGEST_CACHE_TTL_MS) {
+        setCourierSuggestions(cacheEntry.data);
+        setCourierSuggestLoading(false);
+        setCourierSuggestError(null);
+        return;
+      }
+
+      courierSuggestAbortRef.current?.abort();
+      const controller = new AbortController();
+      courierSuggestAbortRef.current = controller;
+
+      setCourierSuggestLoading(true);
+      setCourierSuggestError(null);
+
       const response = await fetch('/api/delivery/courier/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: baseQuery })
+        body: JSON.stringify({ query: baseQuery }),
+        signal: controller.signal
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.success) {
@@ -1387,14 +1719,21 @@ export function Shipment() {
           data?.message || data?.error?.message || 'Failed to load suggestions'
         );
       }
-      setCourierSuggestions(
-        Array.isArray(data?.data?.suggestions) ? data.data.suggestions : []
-      );
+      const suggestions = Array.isArray(data?.data?.suggestions)
+        ? data.data.suggestions
+        : [];
+      courierSuggestCacheRef.current.set(normalizedQuery, {
+        ts: Date.now(),
+        data: suggestions
+      });
+      pruneCache(courierSuggestCacheRef.current);
+      setCourierSuggestions(suggestions);
     } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        return;
+      }
       setCourierSuggestions([]);
-      setCourierSuggestError(
-        error?.message || 'Failed to load suggestions'
-      );
+      setCourierSuggestError(error?.message || 'Failed to load suggestions');
     } finally {
       setCourierSuggestLoading(false);
     }
@@ -1402,6 +1741,7 @@ export function Shipment() {
 
   const geolocateCourierAddress = useCallback(
     async (lat: number, lng: number, options?: { preserveMarker?: boolean }) => {
+      const requestId = ++courierGeocodeRequestRef.current;
       setCourierGeoLoading(true);
       setCourierSuggestError(null);
       setIsCourierSuggestionSelected(false);
@@ -1410,10 +1750,75 @@ export function Shipment() {
       setCourierCost(null);
       setCourierCostError(null);
       try {
+        const geoKey = buildGeoCacheKey(lat, lng);
+        if (courierGeocodeKeyRef.current === geoKey) {
+          setCourierGeoLoading(false);
+          return;
+        }
+        courierGeocodeKeyRef.current = geoKey;
+        const cacheEntry = courierGeocodeCacheRef.current.get(geoKey);
+        if (cacheEntry && Date.now() - cacheEntry.ts < GEO_CACHE_TTL_MS) {
+          if (
+            courierGeocodeRequestRef.current !== requestId ||
+            courierGeocodeKeyRef.current !== geoKey
+          ) {
+            setCourierGeoLoading(false);
+            return;
+          }
+          const suggestion = cacheEntry.data[0];
+          if (suggestion) {
+            const suggestionData = suggestion?.data || {};
+            const hasStreet = Boolean(
+              suggestionData.street_with_type || suggestionData.street
+            );
+            const hasHouse = Boolean(
+              suggestionData.house || suggestionData.house_fias_id
+            );
+            if (hasStreet && hasHouse) {
+              applyCourierSuggestion(suggestion, {
+                skipMarkerUpdate: options?.preserveMarker
+              });
+            } else {
+              const displayValue =
+                suggestion?.value || suggestion?.unrestricted_value || '';
+              if (displayValue) {
+                courierSuppressSuggestRef.current = true;
+                setCourierQuery(`${displayValue} `);
+                setIsCourierQueryExpanded(true);
+                resizeCourierQueryInput(true);
+              }
+              setCourierSuggestError(_('Select an address with street and house.'));
+              setIsCourierSuggestionSelected(false);
+            setSelectedCourierSuggestionValue('');
+            setSelectedCourierSuggestionData(suggestionData);
+            setSelectedCourierAddressLine2('');
+            setCourierEntrance('');
+            setCourierFloor('');
+            setCourierIntercom('');
+            updateCourierAddress2({
+              baseLine2: '',
+              flatLabel: '',
+              entrance: '',
+              floor: '',
+              intercom: ''
+            });
+            setCourierSuggestions([]);
+            setIsCourierSuggestOpen(false);
+            }
+          }
+          setCourierGeoLoading(false);
+          return;
+        }
+
+        courierGeocodeAbortRef.current?.abort();
+        const controller = new AbortController();
+        courierGeocodeAbortRef.current = controller;
+
         const response = await fetch('/api/delivery/courier/geolocate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lon: lng })
+          body: JSON.stringify({ lat, lon: lng }),
+          signal: controller.signal
         });
         const data = await response.json().catch(() => null);
         if (!response.ok || !data?.success) {
@@ -1421,7 +1826,23 @@ export function Shipment() {
             data?.message || data?.error?.message || 'Failed to geolocate'
           );
         }
-        const suggestion = data?.data?.suggestions?.[0];
+        if (
+          courierGeocodeRequestRef.current !== requestId ||
+          courierGeocodeKeyRef.current !== geoKey
+        ) {
+          setCourierGeoLoading(false);
+          return;
+        }
+        const suggestions = Array.isArray(data?.data?.suggestions)
+          ? data.data.suggestions
+          : [];
+        courierGeocodeCacheRef.current.set(geoKey, {
+          ts: Date.now(),
+          data: suggestions
+        });
+        pruneCache(courierGeocodeCacheRef.current);
+
+        const suggestion = suggestions[0];
         if (suggestion) {
           const suggestionData = suggestion?.data || {};
           const hasStreet = Boolean(
@@ -1438,6 +1859,7 @@ export function Shipment() {
             const displayValue =
               suggestion?.value || suggestion?.unrestricted_value || '';
             if (displayValue) {
+              courierSuppressSuggestRef.current = true;
               setCourierQuery(`${displayValue} `);
               setIsCourierQueryExpanded(true);
               resizeCourierQueryInput(true);
@@ -1447,6 +1869,16 @@ export function Shipment() {
             setSelectedCourierSuggestionValue('');
             setSelectedCourierSuggestionData(suggestionData);
             setSelectedCourierAddressLine2('');
+            setCourierEntrance('');
+            setCourierFloor('');
+            setCourierIntercom('');
+            updateCourierAddress2({
+              baseLine2: '',
+              flatLabel: '',
+              entrance: '',
+              floor: '',
+              intercom: ''
+            });
             setCourierSuggestions([]);
             setIsCourierSuggestOpen(false);
           }
@@ -1454,6 +1886,9 @@ export function Shipment() {
           setCourierMarker({ lat, lng });
         }
       } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          return;
+        }
         setCourierSuggestError(
           error?.message || 'Failed to update address'
         );
@@ -1462,17 +1897,32 @@ export function Shipment() {
         setCourierGeoLoading(false);
       }
     },
-    [applyCourierSuggestion, resizeCourierQueryInput]
+    [applyCourierSuggestion, resizeCourierQueryInput, updateCourierAddress2]
   );
 
   const handleCourierMapSelect = useCallback(
     (lat: number, lng: number) => {
       const next = { lat, lng };
-      if (isSameCourierMapPoint(courierMapLastSelectionRef.current, next)) {
+      const samePoint = isSameCourierMapPoint(
+        courierMapLastSelectionRef.current,
+        next
+      );
+      const sameGeoKey =
+        courierGeocodeKeyRef.current === buildGeoCacheKey(lat, lng);
+      if (samePoint && sameGeoKey) {
         return;
       }
       if (courierFlatDraft) {
         setCourierFlatDraft('');
+      }
+      if (courierEntrance) {
+        setCourierEntrance('');
+      }
+      if (courierFloor) {
+        setCourierFloor('');
+      }
+      if (courierIntercom) {
+        setCourierIntercom('');
       }
       if (courierQuery) {
         const { baseQuery } = splitCourierQuery(courierQuery);
@@ -1483,18 +1933,36 @@ export function Shipment() {
         }
       }
       setSelectedCourierAddressLine2('');
+      updateCourierAddress2({
+        baseLine2: '',
+        flatLabel: '',
+        entrance: '',
+        floor: '',
+        intercom: ''
+      });
       setCourierCost(null);
       setCourierCostError(null);
       courierMapLastSelectionRef.current = next;
       setCourierMarker(next);
+      if (sameGeoKey) {
+        return;
+      }
       if (courierMapSelectTimeoutRef.current) {
         clearTimeout(courierMapSelectTimeoutRef.current);
       }
       courierMapSelectTimeoutRef.current = setTimeout(() => {
         geolocateCourierAddress(lat, lng, { preserveMarker: true });
-      }, 250);
+      }, 500);
     },
-    [courierFlatDraft, courierQuery, geolocateCourierAddress]
+    [
+      courierEntrance,
+      courierFlatDraft,
+      courierFloor,
+      courierIntercom,
+      courierQuery,
+      geolocateCourierAddress,
+      updateCourierAddress2
+    ]
   );
 
   useEffect(() => {
@@ -1514,7 +1982,15 @@ export function Shipment() {
     if (courierSuggestTimeoutRef.current) {
       clearTimeout(courierSuggestTimeoutRef.current);
     }
-    if (query.length < 3) {
+    if (courierSuppressSuggestRef.current) {
+      courierSuppressSuggestRef.current = false;
+      setCourierSuggestions([]);
+      setCourierSuggestLoading(false);
+      setCourierSuggestError(null);
+      setIsCourierSuggestOpen(false);
+      return;
+    }
+    if (query.length < 4) {
       setCourierSuggestions([]);
       setCourierSuggestLoading(false);
       setCourierSuggestError(null);
@@ -1523,7 +1999,7 @@ export function Shipment() {
     }
     courierSuggestTimeoutRef.current = setTimeout(() => {
       loadCourierSuggestions(query);
-    }, 350);
+    }, 500);
     return () => {
       if (courierSuggestTimeoutRef.current) {
         clearTimeout(courierSuggestTimeoutRef.current);
@@ -1544,6 +2020,7 @@ export function Shipment() {
     courierAutoLocateRef.current = true;
     if (!navigator.geolocation) {
       if (!courierQuery.trim()) {
+        courierSuppressSuggestRef.current = true;
         setCourierQuery('г Москва ');
         setIsCourierQueryExpanded(true);
         resizeCourierQueryInput(true);
@@ -1553,10 +2030,12 @@ export function Shipment() {
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
+        setCourierMapZoom(COURIER_FOCUS_ZOOM);
         handleCourierMapSelect(latitude, longitude);
       },
       () => {
         if (!courierQuery.trim()) {
+          courierSuppressSuggestRef.current = true;
           setCourierQuery('г Москва ');
           setIsCourierQueryExpanded(true);
           resizeCourierQueryInput(true);
@@ -1576,6 +2055,10 @@ export function Shipment() {
     if (isPanelOpen) {
       return;
     }
+    courierSuggestAbortRef.current?.abort();
+    courierSuggestAbortRef.current = null;
+    courierGeocodeAbortRef.current?.abort();
+    courierGeocodeAbortRef.current = null;
     if (courierMapSelectTimeoutRef.current) {
       clearTimeout(courierMapSelectTimeoutRef.current);
       courierMapSelectTimeoutRef.current = null;
@@ -1621,20 +2104,33 @@ export function Shipment() {
         setCourierCostLoading(true);
         setCourierCostError(null);
         const addressData = form.getValues('shippingAddress');
-        await addShippingAddress({
-          ...addressData,
-          delivery_type: 'courier'
-        });
+        const params = new URLSearchParams();
+        if (addressData.address_1) {
+          params.set('address_1', String(addressData.address_1));
+        }
+        if (addressData.address_2) {
+          params.set('address_2', String(addressData.address_2));
+        }
+        if (addressData.city) {
+          params.set('city', String(addressData.city));
+        }
+        if (addressData.province) {
+          params.set('province', String(addressData.province));
+        }
+        if (addressData.postcode) {
+          params.set('postcode', String(addressData.postcode));
+        }
+        params.set('delivery_type', 'courier');
         const response = await fetch(
-          `/api/shipping/calculate-courier/${cart.uuid}/${COURIER_METHOD_ID}`
+          `/api/shipping/calculate-courier/${cart.uuid}/${COURIER_METHOD_ID}?${params.toString()}`
         );
         const data = await response.json().catch(() => null);
         if (!response.ok || !data?.success) {
-          throw new Error(
+          const rawMessage =
             data?.message ||
-              data?.error?.message ||
-              _('Failed to calculate delivery cost')
-          );
+            data?.error?.message ||
+            _('Failed to calculate delivery cost');
+          throw new Error(formatCourierCalcError(rawMessage));
         }
         if (!cancelled) {
           setCourierCost(data?.data?.cost ?? null);
@@ -1659,7 +2155,6 @@ export function Shipment() {
       clearTimeout(timeout);
     };
   }, [
-    addShippingAddress,
     cart?.currency,
     cart?.uuid,
     courierAddressReady,
@@ -1682,6 +2177,7 @@ export function Shipment() {
     const postcode = form.getValues('shippingAddress.postcode') || '';
     const display = [address1, city].filter(Boolean).join(', ');
     if (display) {
+      courierSuppressSuggestRef.current = true;
       setCourierQuery(display);
       if (address1 && (city || province) && postcode) {
         setIsCourierSuggestionSelected(true);
@@ -1702,10 +2198,17 @@ export function Shipment() {
         city: '',
         province: '',
         country: '',
-        postcode: ''
+        postcode: '',
+        courier_note: ''
       },
       { preserveRecipient: true }
     );
+    setCourierFlatDraft('');
+    setCourierEntrance('');
+    setCourierFloor('');
+    setCourierIntercom('');
+    setCourierNoteDraft('');
+    setSelectedCourierAddressLine2('');
   };
 
   const clearShippingSelection = async () => {
@@ -1813,6 +2316,9 @@ export function Shipment() {
     if (!courierAddressReady) {
       toast.error(_('Select a valid courier address'));
       return;
+    }
+    if (courierNoteDraft && !addressData.courier_note) {
+      addressData.courier_note = courierNoteDraft;
     }
     try {
       const created = await addAddress({
@@ -2023,6 +2529,12 @@ export function Shipment() {
     if (hasAnyRecipient) {
       return;
     }
+    if (panelType === 'courier' && isPanelOpen) {
+      return;
+    }
+    if (courierAddressReady) {
+      return;
+    }
     if (!cart?.shippingMethod && !cart?.shippingAddress) {
       return;
     }
@@ -2039,7 +2551,10 @@ export function Shipment() {
     hasAnyRecipient,
     cart?.shippingMethod,
     cart?.shippingAddress,
-    cart?.uuid
+    cart?.uuid,
+    courierAddressReady,
+    isPanelOpen,
+    panelType
   ]);
 
   useEffect(() => {
@@ -2516,8 +3031,7 @@ export function Shipment() {
                               addressId !== '' && addressId === selectedCourierAddressId;
                             const isApplied =
                               cart?.shippingMethod === COURIER_METHOD_ID &&
-                              (address.isDefault ||
-                                isCourierAddressMatch(address, shippingAddress));
+                              isCourierAddressMatch(address, shippingAddress);
                             return (
                               <div
                                 key={address.uuid}
@@ -2662,7 +3176,22 @@ export function Shipment() {
                                       <path d="M10 11v6M14 11v6" />
                                     </svg>
                                   </button>
-                                  <DeliveryAddressSummary address={address} />
+                                  <div className="space-y-1 text-xs text-gray-600">
+                                    {getCourierSummaryLines(address).map(
+                                      (line, index) => (
+                                        <div
+                                          key={line}
+                                          className={
+                                            index === 0
+                                              ? 'text-sm font-medium text-gray-900'
+                                              : undefined
+                                          }
+                                        >
+                                          {line}
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
                                 </div>
                                 {isSelected && !isApplied ? (
                                   <div className="mt-4">
@@ -2743,6 +3272,7 @@ export function Shipment() {
                               onChange={(event) => {
                                 const nextValue = event.target.value;
                                 const { flatLabel } = splitCourierQuery(nextValue);
+                                courierSuppressSuggestRef.current = false;
                                 setCourierQuery(nextValue);
                                 setIsCourierSuggestOpen(true);
                                 if (courierSuggestError) {
@@ -2767,16 +3297,7 @@ export function Shipment() {
                                   isCourierSuggestionSelected &&
                                   flatLabel
                                 ) {
-                                  const mergedAddress2 = [
-                                    selectedCourierAddressLine2,
-                                    flatLabel
-                                  ]
-                                    .filter(Boolean)
-                                    .join(', ');
-                                  setShippingAddressFields(
-                                    { address_2: mergedAddress2 },
-                                    { preserveRecipient: true }
-                                  );
+                                  updateCourierAddress2({ flatLabel });
                                 }
                               }}
                               onInput={(event) => {
@@ -2850,10 +3371,78 @@ export function Shipment() {
                           ) : null}
                         </div>
 
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <div className="text-xs text-gray-500">
+                              {_('Entrance')}
+                            </div>
+                            <input
+                              type="text"
+                              value={courierEntrance}
+                              onChange={(event) => {
+                                const next = event.target.value;
+                                setCourierEntrance(next);
+                                updateCourierAddress2({ entrance: next });
+                              }}
+                              placeholder={_('Entrance')}
+                              className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-xs text-gray-500">
+                              {_('Floor')}
+                            </div>
+                            <input
+                              type="text"
+                              value={courierFloor}
+                              onChange={(event) => {
+                                const next = event.target.value;
+                                setCourierFloor(next);
+                                updateCourierAddress2({ floor: next });
+                              }}
+                              placeholder={_('Floor')}
+                              className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-xs text-gray-500">
+                              {_('Intercom')}
+                            </div>
+                            <input
+                              type="text"
+                              value={courierIntercom}
+                              onChange={(event) => {
+                                const next = event.target.value;
+                                setCourierIntercom(next);
+                                updateCourierAddress2({ intercom: next });
+                              }}
+                              placeholder={_('Intercom')}
+                              className="w-full rounded-lg border border-gray-300 px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="text-xs text-gray-500">
+                            {_('Courier note')}
+                          </div>
+                          <textarea
+                            value={courierNoteDraft}
+                            onChange={(event) => {
+                              const next = event.target.value;
+                              setCourierNoteDraft(next);
+                              form.setValue('shippingAddress.courier_note', next);
+                            }}
+                            placeholder={_('Comment for the courier')}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                            rows={2}
+                          />
+                        </div>
+
                         <button
                           type="button"
                           className="inline-flex items-center gap-2 text-sm text-blue-600"
-                          onClick={() => {
+                        onClick={() => {
                             if (!navigator.geolocation) {
                               toast.error(_('Geolocation is not available'));
                               return;
@@ -2861,6 +3450,7 @@ export function Shipment() {
                             navigator.geolocation.getCurrentPosition(
                               (position) => {
                                 const { latitude, longitude } = position.coords;
+                                setCourierMapZoom(COURIER_FOCUS_ZOOM);
                                 handleCourierMapSelect(latitude, longitude);
                               },
                               () => {
@@ -2920,6 +3510,8 @@ export function Shipment() {
                       <CourierMapPicker
                         marker={courierMarker}
                         onSelect={handleCourierMapSelect}
+                        focusZoom={courierMapZoom}
+                        onZoomApplied={() => setCourierMapZoom(null)}
                         height="100%"
                       />
                       {courierGeoLoading ? (

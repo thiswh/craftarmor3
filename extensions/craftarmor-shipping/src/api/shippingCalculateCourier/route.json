@@ -1,5 +1,5 @@
 {
-  "methods": ["GET"],
+  "methods": ["GET", "POST"],
   "path": "/shipping/calculate-courier/:cart_id/:method_id",
   "access": "public"
 }

@@ -14,6 +14,8 @@ type CourierMapPickerProps = {
   marker?: CourierMapMarker | null;
   onSelect: (lat: number, lng: number) => void;
   height?: number | string;
+  focusZoom?: number | null;
+  onZoomApplied?: () => void;
 };
 
 const DEFAULT_VIEW: ViewState = {
@@ -24,6 +26,7 @@ const DEFAULT_VIEW: ViewState = {
   pitch: 0,
   padding: { top: 0, bottom: 0, left: 0, right: 0 }
 };
+const COURIER_FOCUS_ZOOM = 16;
 
 const isSamePosition = (
   left?: CourierMapMarker | null,
@@ -40,9 +43,13 @@ const isSamePosition = (
 export default function CourierMapPicker({
   marker,
   onSelect,
-  height
+  height,
+  focusZoom,
+  onZoomApplied
 }: CourierMapPickerProps) {
   const mapRef = useRef<MapRef>(null);
+  const skipNextFlyRef = useRef(false);
+  const skipNextMoveRef = useRef(false);
   const mapHeight = height ?? 420;
   const viewState = useMemo(() => {
     if (!marker) {
@@ -52,7 +59,7 @@ export default function CourierMapPicker({
       ...DEFAULT_VIEW,
       latitude: marker.lat,
       longitude: marker.lng,
-      zoom: 15
+      zoom: COURIER_FOCUS_ZOOM
     };
   }, [marker]);
 
@@ -60,17 +67,37 @@ export default function CourierMapPicker({
     if (!mapRef.current || !marker) {
       return;
     }
-    const map = mapRef.current.getMap();
-    const center = map.getCenter();
-    if (isSamePosition(marker, { lat: center.lat, lng: center.lng })) {
+    if (typeof focusZoom !== 'number') {
       return;
     }
+    if (skipNextFlyRef.current && typeof focusZoom !== 'number') {
+      skipNextFlyRef.current = false;
+      return;
+    }
+    const map = mapRef.current.getMap();
+    const center = map.getCenter();
+    const shouldApplyZoom =
+      typeof focusZoom === 'number' && map.getZoom() < focusZoom;
+    if (
+      !shouldApplyZoom &&
+      isSamePosition(marker, { lat: center.lat, lng: center.lng })
+    ) {
+      return;
+    }
+    const targetZoom =
+      typeof focusZoom === 'number'
+        ? Math.max(map.getZoom(), focusZoom)
+        : map.getZoom();
+    skipNextMoveRef.current = true;
     map.flyTo({
       center: [marker.lng, marker.lat],
-      zoom: map.getZoom(),
+      zoom: targetZoom,
       duration: 500
     });
-  }, [marker]);
+    if (typeof focusZoom === 'number') {
+      onZoomApplied?.();
+    }
+  }, [focusZoom, marker, onZoomApplied]);
 
   return (
     <div className="relative w-full h-full" style={{ height: mapHeight }}>
@@ -95,18 +122,27 @@ export default function CourierMapPicker({
             return;
           }
           const map = mapRef.current.getMap();
+          skipNextFlyRef.current = true;
+          skipNextMoveRef.current = true;
           map.flyTo({
             center: [event.lngLat.lng, event.lngLat.lat],
-            zoom: map.getZoom(),
+            zoom: Math.max(map.getZoom(), COURIER_FOCUS_ZOOM),
             duration: 350
           });
           onSelect(event.lngLat.lat, event.lngLat.lng);
         }}
-        onDragEnd={(event: any) => {
+        onMoveEnd={(event: any) => {
+          if (skipNextMoveRef.current) {
+            skipNextMoveRef.current = false;
+            return;
+          }
           if (!event?.viewState) {
             return;
           }
-          const next = { lat: event.viewState.latitude, lng: event.viewState.longitude };
+          const next = {
+            lat: event.viewState.latitude,
+            lng: event.viewState.longitude
+          };
           if (isSamePosition(marker || null, next)) {
             return;
           }

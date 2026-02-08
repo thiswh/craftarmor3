@@ -56,6 +56,60 @@ const buildAddressLine = (primary?: string, secondary?: string) => {
   return trimmedPrimary || trimmedSecondary;
 };
 
+const readQueryValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return String(value[0] || '');
+  }
+  if (value === undefined || value === null) {
+    return '';
+  }
+  return String(value);
+};
+
+const getOverrideAddress = (request: Request) => {
+  const body = (request as any)?.body || {};
+  const bodyAddress =
+    (body && (body.address || body.shippingAddress)) || null;
+  const query = (request as any)?.query || {};
+  const queryAddress = {
+    address_1: readQueryValue(query.address_1 || query.address1),
+    address_2: readQueryValue(query.address_2 || query.address2),
+    city: readQueryValue(query.city),
+    province: readQueryValue(query.province || query.region),
+    postcode: readQueryValue(query.postcode || query.postal_code),
+    country: readQueryValue(query.country),
+    delivery_type: readQueryValue(query.delivery_type || query.deliveryType)
+  };
+
+  const hasQueryAddress = Object.values(queryAddress).some(
+    (value) => String(value || '').trim().length > 0
+  );
+
+  const source =
+    bodyAddress && typeof bodyAddress === 'object' ? bodyAddress : hasQueryAddress ? queryAddress : null;
+
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  return {
+    address_1: toText((source as any).address_1 || (source as any).address1),
+    address_2: toText((source as any).address_2 || (source as any).address2),
+    city: toText((source as any).city),
+    province: toText(
+      (source as any).province || (source as any).region || (source as any).province_name
+    ),
+    postcode: toText(
+      (source as any).postcode || (source as any).postal_code
+    ),
+    delivery_type: toText(
+      (source as any).delivery_type || (source as any).deliveryType
+    ),
+    pickup_point_id: (source as any).pickup_point_id || (source as any).pickupPointId,
+    pickup_data: (source as any).pickup_data || (source as any).pickupData
+  };
+};
+
 export default async function shippingCalculateCourier(
   request: Request,
   response: Response
@@ -151,55 +205,96 @@ export default async function shippingCalculateCourier(
       return;
     }
 
-    const shippingAddressId = cart.shipping_address_id;
-    if (!shippingAddressId) {
-      response.statusCode = 200;
-      response.$body = {
-        success: false,
-        message: 'Shipping address is not selected',
-        data: { cost: 0 }
+    const overrideAddress = getOverrideAddress(request);
+    let addressDeliveryType: 'pickup' | 'courier' = 'courier';
+    let destination: {
+      postalCode: string;
+      city: string;
+      address: string;
+      region: string;
+    };
+
+    if (overrideAddress) {
+      addressDeliveryType = normalizeDeliveryType(overrideAddress.delivery_type);
+      if (addressDeliveryType !== 'courier') {
+        response.statusCode = 200;
+        response.$body = {
+          success: false,
+          message: 'Shipping address type does not match selected method',
+          data: { cost: 0 }
+        };
+        return;
+      }
+      destination = {
+        postalCode: overrideAddress.postcode || '',
+        city: overrideAddress.city || '',
+        address: buildAddressLine(
+          overrideAddress.address_1,
+          overrideAddress.address_2
+        ),
+        region: overrideAddress.province || ''
       };
-      return;
-    }
+    } else {
+      const shippingAddressId = cart.shipping_address_id;
+      if (!shippingAddressId) {
+        response.statusCode = 200;
+        response.$body = {
+          success: false,
+          message: 'Shipping address is not selected',
+          data: { cost: 0 }
+        };
+        return;
+      }
 
-    const shippingAddress = await select()
-      .from('cart_address')
-      .where('cart_address_id', '=', shippingAddressId)
-      .load(pool);
+      const shippingAddress = await select()
+        .from('cart_address')
+        .where('cart_address_id', '=', shippingAddressId)
+        .load(pool);
 
-    if (!shippingAddress) {
-      response.statusCode = 200;
-      response.$body = {
-        success: false,
-        message: 'Shipping address is not available',
-        data: { cost: 0 }
+      if (!shippingAddress) {
+        response.statusCode = 200;
+        response.$body = {
+          success: false,
+          message: 'Shipping address is not available',
+          data: { cost: 0 }
+        };
+        return;
+      }
+
+      const pickupMeta =
+        shippingAddress.pickup_point_id ||
+        shippingAddress.pickupPointId ||
+        shippingAddress.pickup_data ||
+        shippingAddress.pickupData ||
+        shippingAddress.pickup_external_id ||
+        shippingAddress.pickupExternalId;
+      const rawDeliveryType =
+        shippingAddress.delivery_type || shippingAddress.deliveryType;
+      addressDeliveryType = rawDeliveryType
+        ? normalizeDeliveryType(rawDeliveryType)
+        : pickupMeta
+          ? 'pickup'
+          : 'courier';
+
+      if (addressDeliveryType !== 'courier') {
+        response.statusCode = 200;
+        response.$body = {
+          success: false,
+          message: 'Shipping address type does not match selected method',
+          data: { cost: 0 }
+        };
+        return;
+      }
+
+      destination = {
+        postalCode: shippingAddress.postcode || shippingAddress.postal_code || '',
+        city: toText(shippingAddress.city),
+        address: buildAddressLine(
+          shippingAddress.address_1 || shippingAddress.address1,
+          shippingAddress.address_2 || shippingAddress.address2
+        ),
+        region: toText(shippingAddress.province) || shippingAddress.region || ''
       };
-      return;
-    }
-
-    const pickupMeta =
-      shippingAddress.pickup_point_id ||
-      shippingAddress.pickupPointId ||
-      shippingAddress.pickup_data ||
-      shippingAddress.pickupData ||
-      shippingAddress.pickup_external_id ||
-      shippingAddress.pickupExternalId;
-    const rawDeliveryType =
-      shippingAddress.delivery_type || shippingAddress.deliveryType;
-    const addressDeliveryType = rawDeliveryType
-      ? normalizeDeliveryType(rawDeliveryType)
-      : pickupMeta
-        ? 'pickup'
-        : 'courier';
-
-    if (addressDeliveryType !== 'courier') {
-      response.statusCode = 200;
-      response.$body = {
-        success: false,
-        message: 'Shipping address type does not match selected method',
-        data: { cost: 0 }
-      };
-      return;
     }
 
     const weightKg = getWeightInKg(items);
@@ -224,17 +319,6 @@ export default async function shippingCalculateCourier(
       dimensionItems,
       DEFAULT_CART_DIMENSIONS
     );
-
-    const destinationAddress = buildAddressLine(
-      shippingAddress.address_1 || shippingAddress.address1,
-      shippingAddress.address_2 || shippingAddress.address2
-    );
-    const destination = {
-      postalCode: shippingAddress.postcode || shippingAddress.postal_code || '',
-      city: toText(shippingAddress.city),
-      address: destinationAddress,
-      region: toText(shippingAddress.province) || shippingAddress.region || ''
-    };
 
     if (!destination.postalCode) {
       response.statusCode = 200;
