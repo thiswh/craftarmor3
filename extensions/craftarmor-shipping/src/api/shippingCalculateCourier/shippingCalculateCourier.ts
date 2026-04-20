@@ -110,6 +110,23 @@ const getOverrideAddress = (request: Request) => {
   };
 };
 
+const isInternalEvershopAxiosRequest = (request: Request): boolean => {
+  const userAgent = String(request.headers['user-agent'] || '').toLowerCase();
+  return userAgent.includes('axios/');
+};
+
+const setErrorResponse = (
+  request: Request,
+  response: Response,
+  statusCode: number,
+  body: Record<string, any>
+) => {
+  const shouldForce200 =
+    statusCode >= 400 && isInternalEvershopAxiosRequest(request);
+  response.statusCode = shouldForce200 ? 200 : statusCode;
+  response.$body = body;
+};
+
 export default async function shippingCalculateCourier(
   request: Request,
   response: Response
@@ -119,22 +136,20 @@ export default async function shippingCalculateCourier(
     const methodId = String(request.params.method_id || '');
 
     if (!cartId || !methodId) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 400, {
         success: false,
         message: 'Required params: cart_id, method_id',
         data: { cost: 0 }
-      };
+      });
       return;
     }
 
     if (methodId !== COURIER_METHOD_UUID) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 400, {
         success: false,
         message: `Unknown method_id: ${methodId}`,
         data: { cost: 0 }
-      };
+      });
       return;
     }
 
@@ -145,12 +160,11 @@ export default async function shippingCalculateCourier(
       .load(pool);
 
     if (!cart) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 404, {
         success: false,
         message: 'Cart not found for this session',
         data: { cost: 0 }
-      };
+      });
       return;
     }
 
@@ -193,15 +207,14 @@ export default async function shippingCalculateCourier(
       }));
 
     if (invalidItems.length > 0) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 422, {
         success: false,
         message: 'Some items are unavailable or missing weight.',
         data: {
           cost: 0,
           invalid_items: invalidItems
         }
-      };
+      });
       return;
     }
 
@@ -217,12 +230,11 @@ export default async function shippingCalculateCourier(
     if (overrideAddress) {
       addressDeliveryType = normalizeDeliveryType(overrideAddress.delivery_type);
       if (addressDeliveryType !== 'courier') {
-        response.statusCode = 200;
-        response.$body = {
+        setErrorResponse(request, response, 409, {
           success: false,
           message: 'Shipping address type does not match selected method',
           data: { cost: 0 }
-        };
+        });
         return;
       }
       destination = {
@@ -237,12 +249,11 @@ export default async function shippingCalculateCourier(
     } else {
       const shippingAddressId = cart.shipping_address_id;
       if (!shippingAddressId) {
-        response.statusCode = 200;
-        response.$body = {
+        setErrorResponse(request, response, 400, {
           success: false,
           message: 'Shipping address is not selected',
           data: { cost: 0 }
-        };
+        });
         return;
       }
 
@@ -252,12 +263,11 @@ export default async function shippingCalculateCourier(
         .load(pool);
 
       if (!shippingAddress) {
-        response.statusCode = 200;
-        response.$body = {
+        setErrorResponse(request, response, 404, {
           success: false,
           message: 'Shipping address is not available',
           data: { cost: 0 }
-        };
+        });
         return;
       }
 
@@ -277,12 +287,11 @@ export default async function shippingCalculateCourier(
           : 'courier';
 
       if (addressDeliveryType !== 'courier') {
-        response.statusCode = 200;
-        response.$body = {
+        setErrorResponse(request, response, 409, {
           success: false,
           message: 'Shipping address type does not match selected method',
           data: { cost: 0 }
-        };
+        });
         return;
       }
 
@@ -299,12 +308,11 @@ export default async function shippingCalculateCourier(
 
     const weightKg = getWeightInKg(items);
     if (!Number.isFinite(weightKg) || weightKg <= 0) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 422, {
         success: false,
         message: 'Cart weight is required for calculation',
         data: { cost: 0 }
-      };
+      });
       return;
     }
     const weightGrams = Math.round(weightKg * 1000);
@@ -321,34 +329,31 @@ export default async function shippingCalculateCourier(
     );
 
     if (!destination.postalCode) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 422, {
         success: false,
         message: 'Destination postal code is required',
         data: { cost: 0 }
-      };
+      });
       return;
     }
 
     if (!destination.address) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 422, {
         success: false,
         message: 'Destination address is required',
         data: { cost: 0 }
-      };
+      });
       return;
     }
 
     const senderPostalCode = process.env.SHOP_SENDER_POSTAL || '';
     const senderCity = process.env.SHOP_SENDER_CITY || '';
     if (!senderPostalCode) {
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 500, {
         success: false,
         message: 'Shop sender postal code not configured',
         data: { cost: 0 }
-      };
+      });
       return;
     }
 
@@ -394,8 +399,7 @@ export default async function shippingCalculateCourier(
       result = await cdekService.calculateDelivery(calcParams);
     } catch (calcError: any) {
       console.error('[shippingCalculateCourier] Calculation error:', calcError);
-      response.statusCode = 200;
-      response.$body = {
+      setErrorResponse(request, response, 503, {
         success: false,
         message:
           calcError?.message ||
@@ -403,7 +407,7 @@ export default async function shippingCalculateCourier(
         data: {
           cost: 0
         }
-      };
+      });
       return;
     }
 
@@ -418,13 +422,13 @@ export default async function shippingCalculateCourier(
     };
   } catch (error: any) {
     console.error('[shippingCalculateCourier] Error:', error);
-    response.$body = {
+    setErrorResponse(request, response, 500, {
       success: false,
       message: 'Internal server error',
       data: {
         cost: 0
       },
       error: error.message
-    };
+    });
   }
 }

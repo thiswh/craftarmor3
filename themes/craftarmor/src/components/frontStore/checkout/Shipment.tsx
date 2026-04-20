@@ -384,6 +384,51 @@ const isPickupAddressMatch = (left?: any, right?: any) => {
 const normalizeAddressValue = (value?: string | null) =>
   String(value || '').trim().toLowerCase();
 
+const normalizeCompareValue = (value?: string | null) =>
+  normalizeAddressValue(value)
+    .replace(/[.,;:/\\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const normalizeCityForCompare = (value?: string | null) =>
+  normalizeCompareValue(value).replace(/^(г|город)\s+/i, '').trim();
+
+const normalizeAddress1ForCompare = (value?: string | null) =>
+  normalizeCompareValue(value)
+    .replace(/\b(д|дом)\.?\s*/gi, '')
+    .replace(/\b(ул|улица)\.?\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const buildCourierAddressFingerprint = (meta: {
+  address1?: string | null;
+  city?: string | null;
+  province?: string | null;
+}) => {
+  const locality = normalizeCityForCompare(meta.city || meta.province || '');
+  let address = normalizeAddress1ForCompare(meta.address1 || '');
+  if (locality) {
+    const escapedLocality = escapeRegExp(locality);
+    address = address
+      .replace(new RegExp(`\\b${escapedLocality}\\b`, 'gi'), ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  return normalizeCompareValue(`${locality} ${address}`);
+};
+
+const isSameOrEmpty = (left?: string | null, right?: string | null) => {
+  const leftNormalized = normalizeCompareValue(left);
+  const rightNormalized = normalizeCompareValue(right);
+  if (!leftNormalized || !rightNormalized) {
+    return true;
+  }
+  return leftNormalized === rightNormalized;
+};
+
 const getCourierIdentity = (address?: any) => ({
   address1: address?.address1 || address?.address_1 || '',
   address2: address?.address2 || address?.address_2 || '',
@@ -400,6 +445,46 @@ const getCourierIdentity = (address?: any) => ({
     '',
   postcode: address?.postcode || ''
 });
+
+const getCourierCoreIdentity = (address?: any) => ({
+  address1: address?.address1 || address?.address_1 || '',
+  city: address?.city || '',
+  province:
+    address?.province?.code ||
+    address?.province?.name ||
+    address?.province ||
+    '',
+  country:
+    address?.country?.code ||
+    address?.country?.name ||
+    address?.country ||
+    '',
+  postcode: address?.postcode || ''
+});
+
+const isCourierAddressCoreMatch = (left?: any, right?: any) => {
+  const leftMeta = getCourierCoreIdentity(left);
+  const rightMeta = getCourierCoreIdentity(right);
+  const leftFingerprint = buildCourierAddressFingerprint({
+    address1: leftMeta.address1,
+    city: leftMeta.city,
+    province: leftMeta.province
+  });
+  const rightFingerprint = buildCourierAddressFingerprint({
+    address1: rightMeta.address1,
+    city: rightMeta.city,
+    province: rightMeta.province
+  });
+  const leftCountry = normalizeCompareValue(leftMeta.country);
+  const rightCountry = normalizeCompareValue(rightMeta.country);
+  return (
+    leftFingerprint.length > 0 &&
+    rightFingerprint.length > 0 &&
+    leftFingerprint === rightFingerprint &&
+    (!leftCountry || !rightCountry || leftCountry === rightCountry) &&
+    isSameOrEmpty(leftMeta.postcode, rightMeta.postcode)
+  );
+};
 
 const isCourierAddressMatch = (left?: any, right?: any) => {
   const leftMeta = getCourierIdentity(left);
@@ -632,15 +717,20 @@ const mergeAddressOrder = (
   if (ordered.length === 0) {
     return current;
   }
-  const currentKeySet = new Set(current.map((item) => getAddressKey(item)));
-  const filtered = ordered.filter((item) =>
-    currentKeySet.has(getAddressKey(item))
+  const currentByKey = new Map(
+    current.map((item) => [getAddressKey(item), item] as const)
   );
-  const filteredKeySet = new Set(filtered.map((item) => getAddressKey(item)));
+  const orderedKeys = ordered
+    .map((item) => getAddressKey(item))
+    .filter((key) => currentByKey.has(key));
+  const orderedKeySet = new Set(orderedKeys);
+  const normalizedOrdered = orderedKeys
+    .map((key) => currentByKey.get(key))
+    .filter(Boolean) as ExtendedCustomerAddress[];
   const appended = current.filter(
-    (item) => !filteredKeySet.has(getAddressKey(item))
+    (item) => !orderedKeySet.has(getAddressKey(item))
   );
-  return [...filtered, ...appended];
+  return [...normalizedOrdered, ...appended];
 };
 
 const findPickupAddressByPoint = (
@@ -941,6 +1031,14 @@ export function Shipment() {
       ),
     [courierAddresses, selectedCourierAddressId]
   );
+  const appliedCourierAddress = useMemo(() => {
+    if (!shippingAddress) {
+      return null;
+    }
+    return courierAddresses.find((address) =>
+      isCourierAddressMatch(address, shippingAddress)
+    );
+  }, [courierAddresses, shippingAddress]);
 
   const openPanel = (type: DeliveryType) => {
     if (hasInvalidItems) {
@@ -1414,7 +1512,8 @@ export function Shipment() {
     }
   }, [courierAddresses, selectedCourierAddressId]);
 
-  const summaryAddress = shippingAddress;
+  const hasDelivery = Boolean(cart?.shippingMethod && cart?.shippingAddress);
+  const summaryAddress = hasDelivery ? shippingAddress : null;
   const pickupSummaryData =
     deliveryType === 'pickup' ? getPickupMetaFromAddress(summaryAddress as any) : null;
 
@@ -1432,10 +1531,16 @@ export function Shipment() {
       pickupData?.address || summaryAddress.address1 || summaryAddress.address_1 || '';
     const address2 =
       pickupData?.name || summaryAddress.address2 || summaryAddress.address_2 || '';
-    const courierNote =
+    let courierNote =
       (summaryAddress as any).courierNote ||
       (summaryAddress as any).courier_note ||
       '';
+    if (!courierNote && appliedCourierAddress) {
+      courierNote =
+        (appliedCourierAddress as any)?.courierNote ||
+        (appliedCourierAddress as any)?.courier_note ||
+        '';
+    }
     const city = pickupData?.city || summaryAddress.city || '';
     const province =
       pickupData?.region ||
@@ -1481,7 +1586,7 @@ export function Shipment() {
     }
 
     return lines.length > 0 ? lines : [];
-  }, [deliveryType, pickupSummaryData, summaryAddress]);
+  }, [deliveryType, pickupSummaryData, summaryAddress, appliedCourierAddress]);
 
   const updateShipment = async (
     method: { code: string; name: string },
@@ -1509,20 +1614,10 @@ export function Shipment() {
       await addShippingAddress(updatedShippingAddress);
       addressApplied = true;
       await addShippingMethod(method.code, method.name);
-      updateCheckoutData({
-        shippingAddress: updatedShippingAddress,
-        shippingMethod: method.code
-      });
-      try {
-        await syncCartWithServer('updateShipment');
-      } catch (syncError) {
-        console.warn('[Shipment] syncCartWithServer failed', syncError);
-      }
       return true;
     } catch (error) {
       if (addressApplied) {
         await clearShippingSelection();
-        updateCheckoutData({ shippingAddress: null, shippingMethod: null });
         clearDeliveryAddressFields();
         setSelectedPickupAddressId('');
         setSelectedCourierAddressId('');
@@ -2308,7 +2403,12 @@ export function Shipment() {
     if (!validate) {
       return;
     }
-    const addressData = form.getValues('shippingAddress');
+    const rawAddressData = form.getValues('shippingAddress') || {};
+    const addressData = {
+      ...rawAddressData,
+      address_2: buildCourierAddress2Value(),
+      courier_note: courierNoteDraft || ''
+    };
     if (!addressData.full_name || !addressData.telephone) {
       toast.error(_('Enter full name and telephone for the recipient'));
       return;
@@ -2317,24 +2417,125 @@ export function Shipment() {
       toast.error(_('Select a valid courier address'));
       return;
     }
-    if (courierNoteDraft && !addressData.courier_note) {
-      addressData.courier_note = courierNoteDraft;
-    }
     try {
-      const created = await addAddress({
-        ...addressData,
-        delivery_type: 'courier',
-        is_default: true
-      });
-      if (created) {
-        const createdKey = normalizeId(created.uuid || created.addressId);
-        if (createdKey) {
-          setSelectedCourierAddressId(createdKey);
+      const existingCourierAddress = courierAddresses.find((address) =>
+        isCourierAddressCoreMatch(address, addressData)
+      );
+
+      if (existingCourierAddress) {
+        const updatePayload = {
+          ...addressData,
+          delivery_type: 'courier',
+          is_default: true
+        };
+        const existingKey = getAddressKey(existingCourierAddress);
+        const existingFromCustomer =
+          customerAddresses.find(
+            (candidate) => getAddressKey(candidate) === existingKey
+          ) ||
+          customerAddresses.find((candidate) =>
+            isCourierAddressCoreMatch(candidate, addressData)
+          ) ||
+          existingCourierAddress;
+        const existingAddressId = resolveAddressId(
+          existingFromCustomer,
+          customerAddresses
+        );
+        const selectedKey = getAddressKey(existingFromCustomer);
+        const updateLocalAddresses = (
+          updatedAddress: Record<string, any> = {}
+        ) => {
+          if (!customer) {
+            return;
+          }
+          const nextAddress1 = String(updatePayload.address_1 || '');
+          const nextAddress2 = String(updatePayload.address_2 || '');
+          const nextCity = String(updatePayload.city || '');
+          const nextPostcode = String(updatePayload.postcode || '');
+          const nextCourierNote = String(updatePayload.courier_note || '');
+          let applied = false;
+          const nextAddresses = customerAddresses.map((candidate) => {
+            const byKey =
+              Boolean(selectedKey) && getAddressKey(candidate) === selectedKey;
+            const byCore =
+              !applied && isCourierAddressCoreMatch(candidate, addressData);
+            if (!byKey && !byCore) {
+              return {
+                ...candidate,
+                isDefault: false
+              };
+            }
+            applied = true;
+            return {
+              ...candidate,
+              ...updatedAddress,
+              ...updatePayload,
+              address1: nextAddress1,
+              address_1: nextAddress1,
+              address2: nextAddress2,
+              address_2: nextAddress2,
+              city: nextCity,
+              postcode: nextPostcode,
+              courierNote: nextCourierNote,
+              courier_note: nextCourierNote,
+              isDefault: true
+            };
+          });
+          setCustomer({
+            ...customer,
+            addresses: nextAddresses
+          } as any);
+        };
+        if (existingAddressId) {
+          const updatedAddress = await updateAddress(
+            existingAddressId,
+            updatePayload
+          );
+          updateLocalAddresses(updatedAddress || {});
+        } else {
+          const updateApi = (existingFromCustomer as any)?.updateApi as
+            | string
+            | undefined;
+          if (!updateApi) {
+            throw new Error(_('Failed to resolve existing courier address ID'));
+          }
+          const response = await fetch(updateApi, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatePayload)
+          });
+          const json = await response.json().catch(() => null);
+          if (!response.ok || json?.error) {
+            throw new Error(
+              json?.error?.message ||
+                json?.message ||
+                _('Failed to update address')
+            );
+          }
+          const updatedAddress = json?.data || {};
+          updateLocalAddresses(updatedAddress);
+        }
+
+        if (selectedKey) {
+          setSelectedCourierAddressId(selectedKey);
+        }
+      } else {
+        const created = await addAddress({
+          ...addressData,
+          delivery_type: 'courier',
+          is_default: true
+        });
+        if (created) {
+          const createdKey = normalizeId(created.uuid || created.addressId);
+          if (createdKey) {
+            setSelectedCourierAddressId(createdKey);
+          }
         }
       }
-    const updated = await updateShipment(courierMethod, {
-      delivery_type: 'courier'
-    });
+
+      const updated = await updateShipment(courierMethod, {
+        delivery_type: 'courier'
+      });
       if (updated) {
         closePanel();
       }
@@ -2460,7 +2661,42 @@ export function Shipment() {
   const hasAnyRecipient = pickupAddresses.length > 0 || courierAddresses.length > 0;
   const addressesLoaded = Boolean(customer) && !isCustomerLoading;
   const hasInvalidItems = invalidItems.length > 0;
-  const cartUpdatedKey = cart?.updatedAt?.value || '';
+  const getInvalidItemsFromCartState = useCallback((): InvalidCartItem[] => {
+    const items = (cart as any)?.items;
+    if (!Array.isArray(items)) {
+      return [];
+    }
+    return items
+      .filter((item: any) => {
+        const hasProduct =
+          item?.productId !== undefined && item?.productId !== null;
+        const weight = Number(item?.productWeight?.value ?? 0);
+        return !hasProduct || !Number.isFinite(weight) || weight <= 0;
+      })
+      .map((item: any) => ({
+        cart_item_id: Number(item?.cartItemId ?? 0),
+        uuid: item?.uuid || '',
+        product_id: item?.productId,
+        product_name: item?.productName || null,
+        product_sku: item?.productSku || null,
+        reason:
+          item?.productId === undefined || item?.productId === null
+            ? 'missing_product'
+            : 'missing_weight'
+      }));
+  }, [cart]);
+  const invalidItemsSignature = useMemo(() => {
+    const cartItems = (cart as any)?.items;
+    if (!Array.isArray(cartItems) || cartItems.length === 0) {
+      return '';
+    }
+    return cartItems
+      .map((item: any) => {
+        const weight = item?.productWeight?.value ?? '';
+        return `${item?.uuid || ''}:${item?.qty || ''}:${item?.productId || ''}:${weight}`;
+      })
+      .join('|');
+  }, [cart?.items]);
 
   const loadInvalidItems = useCallback(async () => {
     if (!cart?.uuid) {
@@ -2469,10 +2705,55 @@ export function Shipment() {
     }
     setInvalidItemsLoading(true);
     try {
-      const response = await fetch(
-        `/api/shipping/calculate/${cart.uuid}/${PICKUP_METHOD_ID}`
-      );
-      const data = await response.json();
+      let invalidCheckUrl = `/api/shipping/calculate/${cart.uuid}/${PICKUP_METHOD_ID}`;
+      if (cart?.shippingMethod === COURIER_METHOD_ID) {
+        const formAddress = (form.getValues('shippingAddress') as any) || {};
+        const cartAddress = (cart as any)?.shippingAddress || {};
+        const postcode =
+          formAddress.postcode || cartAddress.postcode || cartAddress.postal_code || '';
+        const city =
+          formAddress.city || cartAddress.city || '';
+        const province =
+          formAddress.province ||
+          cartAddress?.province?.code ||
+          cartAddress?.province?.name ||
+          cartAddress?.province ||
+          '';
+        const address1 =
+          formAddress.address_1 || cartAddress.address1 || cartAddress.address_1 || '';
+        const address2 =
+          formAddress.address_2 || cartAddress.address2 || cartAddress.address_2 || '';
+
+        if (!postcode || !address1) {
+          setInvalidItems(getInvalidItemsFromCartState());
+          return;
+        }
+
+        const params = new URLSearchParams();
+        params.set('delivery_type', 'courier');
+        params.set('postcode', String(postcode));
+        if (city) {
+          params.set('city', String(city));
+        }
+        if (province) {
+          params.set('province', String(province));
+        }
+        params.set('address_1', String(address1));
+        if (address2) {
+          params.set('address_2', String(address2));
+        }
+        invalidCheckUrl = `/api/shipping/calculate-courier/${cart.uuid}/${COURIER_METHOD_ID}?${params.toString()}`;
+      }
+      const response = await fetch(invalidCheckUrl);
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        if (response.status === 422 && cart?.shippingMethod === COURIER_METHOD_ID) {
+          setInvalidItems(getInvalidItemsFromCartState());
+          return;
+        }
+        setInvalidItems([]);
+        return;
+      }
       const items = data?.data?.invalid_items;
       if (Array.isArray(items) && items.length > 0) {
         setInvalidItems(items);
@@ -2484,7 +2765,7 @@ export function Shipment() {
     } finally {
       setInvalidItemsLoading(false);
     }
-  }, [cart?.uuid]);
+  }, [cart, form, getInvalidItemsFromCartState]);
 
   const handleRemoveInvalidItems = async () => {
     if (isRemovingInvalidItems || invalidItems.length === 0) {
@@ -2514,7 +2795,7 @@ export function Shipment() {
       return;
     }
     loadInvalidItems();
-  }, [cart?.uuid, cartUpdatedKey, loadInvalidItems]);
+  }, [cart?.uuid, invalidItemsSignature, loadInvalidItems]);
 
   useEffect(() => {
     updateCheckoutData({
