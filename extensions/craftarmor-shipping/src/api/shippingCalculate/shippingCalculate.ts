@@ -67,6 +67,16 @@ const getPickupData = (shippingAddress: any) => {
   return null;
 };
 
+const readQueryValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return String(value[0] || '');
+  }
+  if (value === undefined || value === null) {
+    return '';
+  }
+  return String(value);
+};
+
 const isInternalEvershopAxiosRequest = (request: Request): boolean => {
   const userAgent = String(request.headers['user-agent'] || '').toLowerCase();
   return userAgent.includes('axios/');
@@ -91,6 +101,10 @@ export default async function shippingCalculate(
   try {
     const cartId = String(request.params.cart_id || '');
     const methodId = String(request.params.method_id || '');
+    const checkInvalidOnly =
+      ['1', 'true', 'yes'].includes(
+        readQueryValue((request as any)?.query?.check_invalid_only).toLowerCase()
+      );
 
     if (!cartId || !methodId) {
       setErrorResponse(request, response, 400, {
@@ -163,6 +177,17 @@ export default async function shippingCalculate(
         product_sku: item.product_sku,
         reason: !item.product_exists ? 'missing_product' : 'missing_weight'
       }));
+
+    if (checkInvalidOnly) {
+      response.$body = {
+        success: true,
+        data: {
+          cost: 0,
+          invalid_items: invalidItems
+        }
+      };
+      return;
+    }
 
     if (invalidItems.length > 0) {
       setErrorResponse(request, response, 422, {

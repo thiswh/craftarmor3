@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DeliveryMapPicker from '../../../pages/checkout/DeliveryMapPicker.js';
 import CourierMapPicker, {
   type CourierMapMarker
@@ -391,12 +391,14 @@ const normalizeCompareValue = (value?: string | null) =>
     .trim();
 
 const normalizeCityForCompare = (value?: string | null) =>
-  normalizeCompareValue(value).replace(/^(г|город)\s+/i, '').trim();
+  normalizeCompareValue(value)
+    .replace(/^(\u0433|\u0433\u043e\u0440\u043e\u0434)\s+/i, '')
+    .trim();
 
 const normalizeAddress1ForCompare = (value?: string | null) =>
   normalizeCompareValue(value)
-    .replace(/\b(д|дом)\.?\s*/gi, '')
-    .replace(/\b(ул|улица)\.?\s*/gi, '')
+    .replace(/\b(\u0434|\u0434\u043e\u043c)\.?\s*/gi, '')
+    .replace(/\b(\u0443\u043b|\u0443\u043b\u0438\u0446\u0430)\.?\s*/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -418,6 +420,24 @@ const buildCourierAddressFingerprint = (meta: {
       .trim();
   }
   return normalizeCompareValue(`${locality} ${address}`);
+};
+
+const extractHouseToken = (value?: string | null) => {
+  const text = normalizeCompareValue(value);
+  const match = text.match(/\b\d+[0-9a-z\u0430-\u044f/-]*\b/i);
+  return match ? match[0] : '';
+};
+
+const extractStreetToken = (value?: string | null) => {
+  const houseToken = extractHouseToken(value);
+  let normalized = normalizeAddress1ForCompare(value);
+  if (houseToken) {
+    normalized = normalized
+      .replace(new RegExp(`\\b${escapeRegExp(houseToken)}\\b`, 'i'), ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  return normalized;
 };
 
 const isSameOrEmpty = (left?: string | null, right?: string | null) => {
@@ -465,24 +485,52 @@ const getCourierCoreIdentity = (address?: any) => ({
 const isCourierAddressCoreMatch = (left?: any, right?: any) => {
   const leftMeta = getCourierCoreIdentity(left);
   const rightMeta = getCourierCoreIdentity(right);
+
+  const leftCity = normalizeCityForCompare(leftMeta.city || leftMeta.province);
+  const rightCity = normalizeCityForCompare(
+    rightMeta.city || rightMeta.province
+  );
+  const leftStreet = extractStreetToken(leftMeta.address1);
+  const rightStreet = extractStreetToken(rightMeta.address1);
+  const leftHouse = extractHouseToken(leftMeta.address1);
+  const rightHouse = extractHouseToken(rightMeta.address1);
+
   const leftFingerprint = buildCourierAddressFingerprint({
-    address1: leftMeta.address1,
-    city: leftMeta.city,
-    province: leftMeta.province
+    address1: `${leftStreet} ${leftHouse}`.trim(),
+    city: leftCity,
+    province: ''
   });
   const rightFingerprint = buildCourierAddressFingerprint({
-    address1: rightMeta.address1,
-    city: rightMeta.city,
-    province: rightMeta.province
+    address1: `${rightStreet} ${rightHouse}`.trim(),
+    city: rightCity,
+    province: ''
   });
+
   const leftCountry = normalizeCompareValue(leftMeta.country);
   const rightCountry = normalizeCompareValue(rightMeta.country);
+  const leftPostcode = normalizeCompareValue(leftMeta.postcode);
+  const rightPostcode = normalizeCompareValue(rightMeta.postcode);
+  const postcodeMatches =
+    !leftPostcode && !rightPostcode
+      ? true
+      : leftPostcode && rightPostcode
+        ? leftPostcode === rightPostcode
+        : Boolean(leftHouse && rightHouse && leftHouse === rightHouse);
+
   return (
+    leftCity.length > 0 &&
+    rightCity.length > 0 &&
+    leftStreet.length > 0 &&
+    rightStreet.length > 0 &&
+    leftHouse.length > 0 &&
+    rightHouse.length > 0 &&
+    leftHouse === rightHouse &&
     leftFingerprint.length > 0 &&
     rightFingerprint.length > 0 &&
     leftFingerprint === rightFingerprint &&
     (!leftCountry || !rightCountry || leftCountry === rightCountry) &&
-    isSameOrEmpty(leftMeta.postcode, rightMeta.postcode)
+    postcodeMatches &&
+    isSameOrEmpty(leftCity, rightCity)
   );
 };
 
@@ -607,14 +655,23 @@ const buildCourierAddress2 = (
 };
 
 const formatCourierFlatLabel = (label: string, value: string) => {
-  const normalized = label.toLowerCase();
-  if (normalized.startsWith('квар') || normalized === 'кв') {
+  const normalized = normalizeCompareValue(label);
+  if (
+    normalized.startsWith('\u043a\u0432') ||
+    normalized.startsWith('\u043a\u0432\u0430\u0440')
+  ) {
     return `кв ${value}`;
   }
-  if (normalized.startsWith('офис') || normalized === 'office') {
+  if (
+    normalized.startsWith('\u043e\u0444\u0438\u0441') ||
+    normalized === 'office'
+  ) {
     return `офис ${value}`;
   }
-  if (normalized.startsWith('комн') || normalized === 'room') {
+  if (
+    normalized.startsWith('\u043a\u043e\u043c\u043d') ||
+    normalized === 'room'
+  ) {
     return `комн ${value}`;
   }
   if (normalized.startsWith('apt') || normalized.startsWith('suite')) {
@@ -636,9 +693,7 @@ const splitCourierQuery = (input: string) => {
     const flatLabel = formatCourierFlatLabel(labeledMatch[2], labeledMatch[3]);
     return { baseQuery, flatLabel };
   }
-  const trailingMatch = trimmed.match(
-    /^(.*\b\d+[A-Za-zА-Яа-я-]?)\s+(\d{1,4})\s*$/
-  );
+  const trailingMatch = trimmed.match(/^(.*\b\d+[A-Za-zА-Яа-я-]?)\s+(\d{1,4})\s*$/);
   if (trailingMatch) {
     return {
       baseQuery: trailingMatch[1].trim(),
@@ -675,9 +730,7 @@ const formatCourierCalcError = (message: string) => {
     code === 'v2_recipient_location_not_recognized' ||
     normalized.includes('recipient location is not recognized')
   ) {
-    return _(
-      'К сожалению, доставку по этому адресу рассчитать не удалось. Уточните город/улицу или выберите другой адрес.'
-    );
+    return _('Не удалось рассчитать доставку по этому адресу. Уточните город/улицу или выберите другой адрес.');
   }
   return message || _('Failed to calculate delivery cost');
 };
@@ -2448,11 +2501,31 @@ export function Shipment() {
           if (!customer) {
             return;
           }
-          const nextAddress1 = String(updatePayload.address_1 || '');
-          const nextAddress2 = String(updatePayload.address_2 || '');
-          const nextCity = String(updatePayload.city || '');
-          const nextPostcode = String(updatePayload.postcode || '');
-          const nextCourierNote = String(updatePayload.courier_note || '');
+          const nextAddress1 = String(
+            updatedAddress.address1 ||
+              updatedAddress.address_1 ||
+              updatePayload.address_1 ||
+              ''
+          );
+          const nextAddress2 = String(
+            updatedAddress.address2 ||
+              updatedAddress.address_2 ||
+              updatePayload.address_2 ||
+              ''
+          );
+          const nextCity = String(updatedAddress.city || updatePayload.city || '');
+          const nextPostcode = String(
+            updatedAddress.postcode ||
+              updatedAddress.postal_code ||
+              updatePayload.postcode ||
+              ''
+          );
+          const nextCourierNote = String(
+            updatedAddress.courierNote ||
+              updatedAddress.courier_note ||
+              updatePayload.courier_note ||
+              ''
+          );
           let applied = false;
           const nextAddresses = customerAddresses.map((candidate) => {
             const byKey =
@@ -2468,8 +2541,8 @@ export function Shipment() {
             applied = true;
             return {
               ...candidate,
-              ...updatedAddress,
               ...updatePayload,
+              ...updatedAddress,
               address1: nextAddress1,
               address_1: nextAddress1,
               address2: nextAddress2,
@@ -2661,30 +2734,6 @@ export function Shipment() {
   const hasAnyRecipient = pickupAddresses.length > 0 || courierAddresses.length > 0;
   const addressesLoaded = Boolean(customer) && !isCustomerLoading;
   const hasInvalidItems = invalidItems.length > 0;
-  const getInvalidItemsFromCartState = useCallback((): InvalidCartItem[] => {
-    const items = (cart as any)?.items;
-    if (!Array.isArray(items)) {
-      return [];
-    }
-    return items
-      .filter((item: any) => {
-        const hasProduct =
-          item?.productId !== undefined && item?.productId !== null;
-        const weight = Number(item?.productWeight?.value ?? 0);
-        return !hasProduct || !Number.isFinite(weight) || weight <= 0;
-      })
-      .map((item: any) => ({
-        cart_item_id: Number(item?.cartItemId ?? 0),
-        uuid: item?.uuid || '',
-        product_id: item?.productId,
-        product_name: item?.productName || null,
-        product_sku: item?.productSku || null,
-        reason:
-          item?.productId === undefined || item?.productId === null
-            ? 'missing_product'
-            : 'missing_weight'
-      }));
-  }, [cart]);
   const invalidItemsSignature = useMemo(() => {
     const cartItems = (cart as any)?.items;
     if (!Array.isArray(cartItems) || cartItems.length === 0) {
@@ -2705,52 +2754,13 @@ export function Shipment() {
     }
     setInvalidItemsLoading(true);
     try {
-      let invalidCheckUrl = `/api/shipping/calculate/${cart.uuid}/${PICKUP_METHOD_ID}`;
-      if (cart?.shippingMethod === COURIER_METHOD_ID) {
-        const formAddress = (form.getValues('shippingAddress') as any) || {};
-        const cartAddress = (cart as any)?.shippingAddress || {};
-        const postcode =
-          formAddress.postcode || cartAddress.postcode || cartAddress.postal_code || '';
-        const city =
-          formAddress.city || cartAddress.city || '';
-        const province =
-          formAddress.province ||
-          cartAddress?.province?.code ||
-          cartAddress?.province?.name ||
-          cartAddress?.province ||
-          '';
-        const address1 =
-          formAddress.address_1 || cartAddress.address1 || cartAddress.address_1 || '';
-        const address2 =
-          formAddress.address_2 || cartAddress.address2 || cartAddress.address_2 || '';
-
-        if (!postcode || !address1) {
-          setInvalidItems(getInvalidItemsFromCartState());
-          return;
-        }
-
-        const params = new URLSearchParams();
-        params.set('delivery_type', 'courier');
-        params.set('postcode', String(postcode));
-        if (city) {
-          params.set('city', String(city));
-        }
-        if (province) {
-          params.set('province', String(province));
-        }
-        params.set('address_1', String(address1));
-        if (address2) {
-          params.set('address_2', String(address2));
-        }
-        invalidCheckUrl = `/api/shipping/calculate-courier/${cart.uuid}/${COURIER_METHOD_ID}?${params.toString()}`;
-      }
+      const invalidCheckUrl =
+        cart?.shippingMethod === COURIER_METHOD_ID
+          ? `/api/shipping/calculate-courier/${cart.uuid}/${COURIER_METHOD_ID}?check_invalid_only=1`
+          : `/api/shipping/calculate/${cart.uuid}/${PICKUP_METHOD_ID}?check_invalid_only=1`;
       const response = await fetch(invalidCheckUrl);
       const data = await response.json().catch(() => null);
       if (!response.ok) {
-        if (response.status === 422 && cart?.shippingMethod === COURIER_METHOD_ID) {
-          setInvalidItems(getInvalidItemsFromCartState());
-          return;
-        }
         setInvalidItems([]);
         return;
       }
@@ -2765,7 +2775,7 @@ export function Shipment() {
     } finally {
       setInvalidItemsLoading(false);
     }
-  }, [cart, form, getInvalidItemsFromCartState]);
+  }, [cart?.shippingMethod, cart?.uuid]);
 
   const handleRemoveInvalidItems = async () => {
     if (isRemovingInvalidItems || invalidItems.length === 0) {
@@ -4023,3 +4033,4 @@ export function Shipment() {
     </div>
   );
 }
+
