@@ -1,13 +1,41 @@
 import { select } from '@evershop/postgres-query-builder';
 import { pool } from '@evershop/evershop/lib/postgres';
 import {
+  FORBIDDEN,
   INTERNAL_SERVER_ERROR,
   INVALID_PAYLOAD,
-  OK
+  OK,
+  UNAUTHORIZED
 } from '@evershop/evershop/lib/util/httpStatus';
 
 export default async (request, response) => {
   try {
+    const currentCustomer =
+      (typeof request.getCurrentCustomer === 'function'
+        ? request.getCurrentCustomer()
+        : null) ||
+      request.currentCustomer ||
+      request.locals?.customer;
+    if (!currentCustomer) {
+      response.status(UNAUTHORIZED);
+      return response.json({
+        error: {
+          status: UNAUTHORIZED,
+          message: 'Authentication required'
+        }
+      });
+    }
+
+    if (currentCustomer.uuid !== request.params.customer_id) {
+      response.status(FORBIDDEN);
+      return response.json({
+        error: {
+          status: FORBIDDEN,
+          message: 'Access denied'
+        }
+      });
+    }
+
     const customer = await select()
       .from('customer')
       .where('uuid', '=', request.params.customer_id)

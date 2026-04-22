@@ -10,6 +10,7 @@ export function OrderComment() {
   const [shippingNoteDirty, setShippingNoteDirty] = useState(false);
   const shippingNoteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const shippingNoteInitRef = useRef<string | null>(null);
+  const shippingNoteSavingRef = useRef(false);
 
   useEffect(() => {
     if (!cart?.uuid) {
@@ -27,6 +28,12 @@ export function OrderComment() {
     if (!cart?.addNoteApi) {
       return;
     }
+    if (!shippingNoteDirty) {
+      return;
+    }
+    if (shippingNoteSavingRef.current) {
+      return;
+    }
     const currentNote = cart?.shippingNote || '';
     if (shippingNoteDraft === currentNote) {
       if (shippingNoteDirty) {
@@ -38,6 +45,7 @@ export function OrderComment() {
       clearTimeout(shippingNoteTimeoutRef.current);
     }
     shippingNoteTimeoutRef.current = setTimeout(async () => {
+      shippingNoteSavingRef.current = true;
       setShippingNoteSaving(true);
       try {
         const response = await fetch(cart.addNoteApi, {
@@ -59,6 +67,7 @@ export function OrderComment() {
             : _('Failed to set shipping note')
         );
       } finally {
+        shippingNoteSavingRef.current = false;
         setShippingNoteSaving(false);
       }
     }, 600);

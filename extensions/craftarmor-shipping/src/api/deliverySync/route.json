@@ -1,5 +1,5 @@
 {
   "methods": ["POST"],
   "path": "/delivery/sync",
-  "access": "public"
+  "access": "private"
 }

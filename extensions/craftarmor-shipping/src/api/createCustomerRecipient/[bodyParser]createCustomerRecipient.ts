@@ -2,9 +2,11 @@ import { select } from '@evershop/postgres-query-builder';
 import { pool } from '@evershop/evershop/lib/postgres';
 import { buildUrl } from '@evershop/evershop/lib/router';
 import {
+  FORBIDDEN,
   INTERNAL_SERVER_ERROR,
   INVALID_PAYLOAD,
-  OK
+  OK,
+  UNAUTHORIZED
 } from '@evershop/evershop/lib/util/httpStatus';
 
 const toBoolean = (value: unknown) => {
@@ -17,8 +19,50 @@ const toBoolean = (value: unknown) => {
   return null;
 };
 
+const normalizeName = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const normalized = String(value).replace(/\s+/g, ' ').trim();
+  return normalized || null;
+};
+
+const normalizeTelephone = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const normalized = String(value).replace(/\D+/g, '').slice(0, 15);
+  return normalized || null;
+};
+
 export default async (request, response, next) => {
   try {
+    const currentCustomer =
+      (typeof request.getCurrentCustomer === 'function'
+        ? request.getCurrentCustomer()
+        : null) ||
+      request.currentCustomer ||
+      request.locals?.customer;
+    if (!currentCustomer) {
+      response.status(UNAUTHORIZED);
+      return response.json({
+        error: {
+          status: UNAUTHORIZED,
+          message: 'Authentication required'
+        }
+      });
+    }
+
+    if (currentCustomer.uuid !== request.params.customer_id) {
+      response.status(FORBIDDEN);
+      return response.json({
+        error: {
+          status: FORBIDDEN,
+          message: 'Access denied'
+        }
+      });
+    }
+
     const customer = await select()
       .from('customer')
       .where('uuid', '=', request.params.customer_id)
@@ -34,8 +78,10 @@ export default async (request, response, next) => {
       });
     }
 
-    const fullName = request.body?.full_name ?? request.body?.fullName ?? null;
-    const telephone = request.body?.telephone ?? null;
+    const fullName = normalizeName(
+      request.body?.full_name ?? request.body?.fullName ?? null
+    );
+    const telephone = normalizeTelephone(request.body?.telephone ?? null);
     const isDefault = toBoolean(
       request.body?.is_default ?? request.body?.isDefault ?? null
     );

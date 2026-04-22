@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { select } from '@evershop/postgres-query-builder';
 import { getConfig } from '@evershop/evershop/lib/util/getConfig';
 import { pool } from '@evershop/evershop/lib/postgres';
+import { getMyCart } from '@evershop/evershop/checkout/services';
 import { CdekService } from '../../services/cdek/CdekService.js';
 import {
   calculateCartDimensions,
@@ -66,6 +67,39 @@ const readQueryValue = (value: unknown): string => {
   return String(value);
 };
 
+const getSessionCartUuid = async (request: Request): Promise<string> => {
+  const cookieName = getConfig('system.session.cookieName', 'sid');
+  const sessionId =
+    request.signedCookies?.[cookieName] ?? request.cookies?.[cookieName];
+  if (!sessionId) {
+    return '';
+  }
+  const sessionCart = await getMyCart(sessionId, undefined).catch(() => null);
+  if (!sessionCart || typeof (sessionCart as any).getData !== 'function') {
+    return '';
+  }
+  return String((sessionCart as any).getData('uuid') || '');
+};
+
+const isInternalEvershopAxiosRequest = (request?: Request): boolean => {
+  if (!request) {
+    return false;
+  }
+  const userAgent = String(request.headers['user-agent'] || '').toLowerCase();
+  if (!userAgent.includes('axios/')) {
+    return false;
+  }
+  const host = String(request.headers.host || '').toLowerCase();
+  const ip = String((request as any).ip || '');
+  return (
+    host.startsWith('localhost:') ||
+    host.startsWith('127.0.0.1:') ||
+    ip === '::1' ||
+    ip === '::ffff:127.0.0.1' ||
+    ip === '127.0.0.1'
+  );
+};
+
 const getOverrideAddress = (request: Request) => {
   const body = (request as any)?.body || {};
   const bodyAddress =
@@ -110,17 +144,12 @@ const getOverrideAddress = (request: Request) => {
   };
 };
 
-const isInternalEvershopAxiosRequest = (request: Request): boolean => {
-  const userAgent = String(request.headers['user-agent'] || '').toLowerCase();
-  return userAgent.includes('axios/');
-};
-
 const setErrorResponse = (
-  request: Request,
   response: Response,
   statusCode: number,
   body: Record<string, any>
 ) => {
+  const request = response.req as Request | undefined;
   const shouldForce200 =
     statusCode >= 400 && isInternalEvershopAxiosRequest(request);
   response.statusCode = shouldForce200 ? 200 : statusCode;
@@ -140,7 +169,7 @@ export default async function shippingCalculateCourier(
       );
 
     if (!cartId || !methodId) {
-      setErrorResponse(request, response, 400, {
+      setErrorResponse(response, 400, {
         success: false,
         message: 'Required params: cart_id, method_id',
         data: { cost: 0 }
@@ -148,8 +177,26 @@ export default async function shippingCalculateCourier(
       return;
     }
 
+    const sessionCartUuid = await getSessionCartUuid(request);
+    if (!sessionCartUuid) {
+      setErrorResponse(response, 401, {
+        success: false,
+        message: 'Session is required',
+        data: { cost: 0 }
+      });
+      return;
+    }
+    if (sessionCartUuid !== cartId) {
+      setErrorResponse(response, 403, {
+        success: false,
+        message: 'Access denied for this cart',
+        data: { cost: 0 }
+      });
+      return;
+    }
+
     if (methodId !== COURIER_METHOD_UUID) {
-      setErrorResponse(request, response, 400, {
+      setErrorResponse(response, 400, {
         success: false,
         message: `Unknown method_id: ${methodId}`,
         data: { cost: 0 }
@@ -164,7 +211,7 @@ export default async function shippingCalculateCourier(
       .load(pool);
 
     if (!cart) {
-      setErrorResponse(request, response, 404, {
+      setErrorResponse(response, 404, {
         success: false,
         message: 'Cart not found for this session',
         data: { cost: 0 }
@@ -222,7 +269,7 @@ export default async function shippingCalculateCourier(
     }
 
     if (invalidItems.length > 0) {
-      setErrorResponse(request, response, 422, {
+      setErrorResponse(response, 422, {
         success: false,
         message: 'Some items are unavailable or missing weight.',
         data: {
@@ -245,7 +292,7 @@ export default async function shippingCalculateCourier(
     if (overrideAddress) {
       addressDeliveryType = normalizeDeliveryType(overrideAddress.delivery_type);
       if (addressDeliveryType !== 'courier') {
-        setErrorResponse(request, response, 409, {
+        setErrorResponse(response, 409, {
           success: false,
           message: 'Shipping address type does not match selected method',
           data: { cost: 0 }
@@ -264,7 +311,7 @@ export default async function shippingCalculateCourier(
     } else {
       const shippingAddressId = cart.shipping_address_id;
       if (!shippingAddressId) {
-        setErrorResponse(request, response, 400, {
+        setErrorResponse(response, 400, {
           success: false,
           message: 'Shipping address is not selected',
           data: { cost: 0 }
@@ -278,7 +325,7 @@ export default async function shippingCalculateCourier(
         .load(pool);
 
       if (!shippingAddress) {
-        setErrorResponse(request, response, 404, {
+        setErrorResponse(response, 404, {
           success: false,
           message: 'Shipping address is not available',
           data: { cost: 0 }
@@ -302,7 +349,7 @@ export default async function shippingCalculateCourier(
           : 'courier';
 
       if (addressDeliveryType !== 'courier') {
-        setErrorResponse(request, response, 409, {
+        setErrorResponse(response, 409, {
           success: false,
           message: 'Shipping address type does not match selected method',
           data: { cost: 0 }
@@ -323,7 +370,7 @@ export default async function shippingCalculateCourier(
 
     const weightKg = getWeightInKg(items);
     if (!Number.isFinite(weightKg) || weightKg <= 0) {
-      setErrorResponse(request, response, 422, {
+      setErrorResponse(response, 422, {
         success: false,
         message: 'Cart weight is required for calculation',
         data: { cost: 0 }
@@ -344,7 +391,7 @@ export default async function shippingCalculateCourier(
     );
 
     if (!destination.postalCode) {
-      setErrorResponse(request, response, 422, {
+      setErrorResponse(response, 422, {
         success: false,
         message: 'Destination postal code is required',
         data: { cost: 0 }
@@ -353,7 +400,7 @@ export default async function shippingCalculateCourier(
     }
 
     if (!destination.address) {
-      setErrorResponse(request, response, 422, {
+      setErrorResponse(response, 422, {
         success: false,
         message: 'Destination address is required',
         data: { cost: 0 }
@@ -364,7 +411,7 @@ export default async function shippingCalculateCourier(
     const senderPostalCode = process.env.SHOP_SENDER_POSTAL || '';
     const senderCity = process.env.SHOP_SENDER_CITY || '';
     if (!senderPostalCode) {
-      setErrorResponse(request, response, 500, {
+      setErrorResponse(response, 500, {
         success: false,
         message: 'Shop sender postal code not configured',
         data: { cost: 0 }
@@ -414,7 +461,7 @@ export default async function shippingCalculateCourier(
       result = await cdekService.calculateDelivery(calcParams);
     } catch (calcError: any) {
       console.error('[shippingCalculateCourier] Calculation error:', calcError);
-      setErrorResponse(request, response, 503, {
+      setErrorResponse(response, 503, {
         success: false,
         message:
           calcError?.message ||
@@ -437,7 +484,7 @@ export default async function shippingCalculateCourier(
     };
   } catch (error: any) {
     console.error('[shippingCalculateCourier] Error:', error);
-    setErrorResponse(request, response, 500, {
+    setErrorResponse(response, 500, {
       success: false,
       message: 'Internal server error',
       data: {

@@ -12,7 +12,6 @@ import {
   useCheckoutDispatch
 } from '@components/frontStore/checkout/CheckoutContext.js';
 import { AddressFormLoadingSkeleton } from '@components/frontStore/customer/address/addressForm/AddressFormLoadingSkeleton.js';
-import { NameAndTelephone } from '@components/frontStore/customer/address/addressForm/NameAndTelephone.js';
 import { ProvinceAndPostcode } from '@components/frontStore/customer/address/addressForm/ProvinceAndPostcode.js';
 import { InputField } from '@components/common/form/InputField.js';
 import { SelectField } from '@components/common/form/SelectField.js';
@@ -50,6 +49,7 @@ type DaDataSuggestion = {
 };
 
 type DeliveryType = 'pickup' | 'courier';
+type RecipientPhoneMode = 'ru' | 'intl';
 
 const PICKUP_METHOD_ID = 'd3d16c61-5acf-4cf7-93d9-258e753cd58b';
 const COURIER_METHOD_ID = '1ad1dde4-0b52-4fb9-965f-8c3b5be739e7';
@@ -217,9 +217,79 @@ const getAddressId = (address: ExtendedCustomerAddress) =>
 const getAddressKey = (address: ExtendedCustomerAddress) =>
   normalizeId(address.uuid || getAddressIdValue(address));
 
+const normalizeRecipientName = (value?: string | null) =>
+  String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const normalizeRecipientPhoneDigits = (value?: string | null) =>
+  String(value || '').replace(/\D+/g, '');
+
+const normalizeRecipientPhoneByMode = (
+  value: string | null | undefined,
+  mode: RecipientPhoneMode
+) => {
+  const digits = normalizeRecipientPhoneDigits(value);
+  if (!digits) {
+    return '';
+  }
+  if (mode === 'ru') {
+    const local = (digits.startsWith('7') ? digits.slice(1) : digits).slice(0, 10);
+    return local ? `7${local}` : '';
+  }
+  return digits.slice(0, 15);
+};
+
+const detectRecipientPhoneMode = (
+  value: string | null | undefined
+): RecipientPhoneMode => {
+  const digits = normalizeRecipientPhoneDigits(value);
+  if (digits.startsWith('7') && digits.length <= 11) {
+    return 'ru';
+  }
+  if (!digits) {
+    return 'ru';
+  }
+  return 'intl';
+};
+
+const getRuLocalPhoneDigits = (value: string | null | undefined) => {
+  const digits = normalizeRecipientPhoneDigits(value);
+  if (!digits) {
+    return '';
+  }
+  return (digits.startsWith('7') ? digits.slice(1) : digits).slice(0, 10);
+};
+
+const formatRuPhoneMask = (localDigits: string) => {
+  const local = normalizeRecipientPhoneDigits(localDigits).slice(0, 10);
+  const p1 = local.slice(0, 3);
+  const p2 = local.slice(3, 6);
+  const p3 = local.slice(6, 8);
+  const p4 = local.slice(8, 10);
+
+  let out = '';
+  if (p1) {
+    out += `(${p1}`;
+    if (p1.length === 3) {
+      out += ')';
+    }
+  }
+  if (p2) {
+    out += `${out ? ' ' : ''}${p2}`;
+  }
+  if (p3) {
+    out += `${out ? '-' : ''}${p3}`;
+  }
+  if (p4) {
+    out += `${out ? '-' : ''}${p4}`;
+  }
+  return out;
+};
+
 const getRecipientKey = (fullName?: string | null, telephone?: string | null) => {
-  const name = (fullName || '').trim();
-  const phone = (telephone || '').trim();
+  const name = normalizeRecipientName(fullName);
+  const phone = normalizeRecipientPhoneDigits(telephone);
   const key = [name, phone].filter(Boolean).join('|');
   return key;
 };
@@ -826,6 +896,8 @@ export function Shipment() {
   const [selectedPickupAddressId, setSelectedPickupAddressId] = useState<string>('');
   const [selectedCourierAddressId, setSelectedCourierAddressId] = useState<string>('');
   const [selectedRecipientKey, setSelectedRecipientKey] = useState<string>('');
+  const [recipientPhoneMode, setRecipientPhoneMode] =
+    useState<RecipientPhoneMode>('ru');
   const [isApplyingShipment, setIsApplyingShipment] = useState(false);
   const [invalidItems, setInvalidItems] = useState<InvalidCartItem[]>([]);
   const [invalidItemsLoading, setInvalidItemsLoading] = useState(false);
@@ -929,6 +1001,8 @@ export function Shipment() {
     form.register('shippingAddress.postcode');
     form.register('shippingAddress.country');
     form.register('shippingAddress.courier_note');
+    form.register('recipient.full_name');
+    form.register('recipient.telephone');
   }, [form]);
 
   const resetCourierDraft = useCallback(() => {
@@ -1209,8 +1283,12 @@ export function Shipment() {
   }, []);
 
   const primeRecipientDraft = (fullName?: string, telephone?: string) => {
-    form.setValue('recipient.full_name', fullName || '');
-    form.setValue('recipient.telephone', telephone || '');
+    const normalizedName = normalizeRecipientName(fullName);
+    const mode = detectRecipientPhoneMode(telephone);
+    const normalizedPhone = normalizeRecipientPhoneByMode(telephone, mode);
+    form.setValue('recipient.full_name', normalizedName);
+    form.setValue('recipient.telephone', normalizedPhone);
+    setRecipientPhoneMode(mode);
   };
 
   const handleDeliveryTypeChange = (type: DeliveryType) => {
@@ -1224,10 +1302,16 @@ export function Shipment() {
     fullName?: string,
     telephone?: string
   ) => {
-    const name = (fullName || '').trim();
-    const phone = (telephone || '').trim();
+    const mode = telephone ? detectRecipientPhoneMode(telephone) : recipientPhoneMode;
+    setRecipientPhoneMode(mode);
+    const name = normalizeRecipientName(fullName);
+    const phone = normalizeRecipientPhoneByMode(telephone, mode);
     if (!name || !phone) {
       toast.error(_('Enter full name and telephone for the recipient'));
+      return;
+    }
+    if (mode === 'ru' && phone.length !== 11) {
+      toast.error(_('Enter full Russian phone number'));
       return;
     }
     setShippingAddressFields({
@@ -1256,7 +1340,9 @@ export function Shipment() {
     telephone: string,
     options?: { isDefault?: boolean }
   ) => {
-    const key = getRecipientKey(fullName, telephone);
+    const name = normalizeRecipientName(fullName);
+    const phone = normalizeRecipientPhoneDigits(telephone);
+    const key = getRecipientKey(name, phone);
     if (!customer || !key) {
       return null;
     }
@@ -1274,8 +1360,8 @@ export function Shipment() {
     }
 
     const payload: Record<string, string | boolean> = {
-      full_name: fullName,
-      telephone
+      full_name: name,
+      telephone: phone
     };
     if (options?.isDefault) {
       payload.is_default = true;
@@ -1446,8 +1532,9 @@ export function Shipment() {
     if (!addRecipientApi) {
       return;
     }
-    const name = (customer.fullName || '').trim();
-    const phone = (customerPhone || '').trim();
+    const name = normalizeRecipientName(customer.fullName || '');
+    const mode = detectRecipientPhoneMode(customerPhone || '');
+    const phone = normalizeRecipientPhoneByMode(customerPhone || '', mode);
     if (!name || !phone) {
       return;
     }
@@ -2533,6 +2620,9 @@ export function Shipment() {
             const byCore =
               !applied && isCourierAddressCoreMatch(candidate, addressData);
             if (!byKey && !byCore) {
+              if (normalizeDeliveryType(candidate) !== 'courier') {
+                return candidate;
+              }
               return {
                 ...candidate,
                 isDefault: false
@@ -4005,11 +4095,100 @@ export function Shipment() {
                       {_('Back')}
                     </button>
 
-                    <NameAndTelephone
-                      fullName={watchedRecipient?.full_name || ''}
-                      telephone={watchedRecipient?.telephone || ''}
-                      getFieldName={(field) => `recipient.${field}`}
-                    />
+                    <div className="grid grid-cols-1 gap-2">
+                      <div className="form-field">
+                        <label htmlFor="recipient-full-name">
+                          {_('Full name')}
+                          <span className="required-indicator">*</span>
+                        </label>
+                        <input
+                          id="recipient-full-name"
+                          type="text"
+                          value={watchedRecipient?.full_name || ''}
+                          onChange={(event) => {
+                            form.setValue(
+                              'recipient.full_name',
+                              normalizeRecipientName(event.target.value),
+                              { shouldDirty: true }
+                            );
+                          }}
+                          placeholder={_('Full name')}
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="recipient-telephone">
+                          {_('Telephone')}
+                          <span className="required-indicator">*</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <select
+                            aria-label={_('Phone mode')}
+                            value={recipientPhoneMode}
+                            className="flex-none"
+                            style={{ width: '84px' }}
+                            onChange={(event) => {
+                              const mode = event.target.value as RecipientPhoneMode;
+                              setRecipientPhoneMode(mode);
+                              const normalizedPhone = normalizeRecipientPhoneByMode(
+                                form.getValues('recipient.telephone'),
+                                mode
+                              );
+                              form.setValue('recipient.telephone', normalizedPhone, {
+                                shouldDirty: true
+                              });
+                            }}
+                          >
+                            <option value="ru">RU</option>
+                            <option value="intl">INTL</option>
+                          </select>
+
+                          {recipientPhoneMode === 'ru' ? (
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <span className="text-sm text-gray-600">+7</span>
+                              <input
+                                id="recipient-telephone"
+                                type="tel"
+                                className="min-w-0 flex-1"
+                                value={formatRuPhoneMask(
+                                  getRuLocalPhoneDigits(
+                                    watchedRecipient?.telephone || ''
+                                  )
+                                )}
+                                onChange={(event) => {
+                                  const localDigits = normalizeRecipientPhoneDigits(
+                                    event.target.value
+                                  ).slice(0, 10);
+                                  const normalizedPhone = localDigits
+                                    ? `7${localDigits}`
+                                    : '';
+                                  form.setValue('recipient.telephone', normalizedPhone, {
+                                    shouldDirty: true
+                                  });
+                                }}
+                                placeholder="(900) 123-45-67"
+                              />
+                            </div>
+                          ) : (
+                            <input
+                              id="recipient-telephone"
+                              type="tel"
+                              className="min-w-0 flex-1"
+                              value={watchedRecipient?.telephone || ''}
+                              onChange={(event) => {
+                                const normalizedPhone = normalizeRecipientPhoneByMode(
+                                  event.target.value,
+                                  'intl'
+                                );
+                                form.setValue('recipient.telephone', normalizedPhone, {
+                                  shouldDirty: true
+                                });
+                              }}
+                              placeholder={_('Telephone')}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
 
                     <button
                       type="button"

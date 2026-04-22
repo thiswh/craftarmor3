@@ -67,11 +67,11 @@ export default function CourierMapPicker({
     if (!mapRef.current || !marker) {
       return;
     }
-    if (typeof focusZoom !== 'number') {
+    if (skipNextFlyRef.current) {
+      skipNextFlyRef.current = false;
       return;
     }
-    if (skipNextFlyRef.current && typeof focusZoom !== 'number') {
-      skipNextFlyRef.current = false;
+    if (typeof focusZoom !== 'number') {
       return;
     }
     const map = mapRef.current.getMap();
