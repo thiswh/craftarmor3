@@ -3,14 +3,21 @@ import { useCartState } from '@components/frontStore/cart/CartContext.js';
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
 import { toast } from 'react-toastify';
 
+declare global {
+  interface Window {
+    __checkoutFlushOrderComment?: () => Promise<boolean>;
+  }
+}
+
 export function OrderComment() {
   const { data: cart } = useCartState();
   const [shippingNoteDraft, setShippingNoteDraft] = useState('');
   const [shippingNoteSaving, setShippingNoteSaving] = useState(false);
   const [shippingNoteDirty, setShippingNoteDirty] = useState(false);
-  const shippingNoteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const shippingNoteInitRef = useRef<string | null>(null);
-  const shippingNoteSavingRef = useRef(false);
+  const shippingNoteSavingPromiseRef = useRef<Promise<boolean> | null>(null);
+  const shippingNoteLastSavedRef = useRef('');
+  const shippingNoteDraftRef = useRef('');
 
   useEffect(() => {
     if (!cart?.uuid) {
@@ -20,63 +27,84 @@ export function OrderComment() {
       return;
     }
     shippingNoteInitRef.current = cart.uuid;
-    setShippingNoteDraft(cart.shippingNote || '');
+    const initialNote = cart.shippingNote || '';
+    shippingNoteLastSavedRef.current = initialNote;
+    shippingNoteDraftRef.current = initialNote;
+    setShippingNoteDraft(initialNote);
     setShippingNoteDirty(false);
   }, [cart?.shippingNote, cart?.uuid]);
 
   useEffect(() => {
+    shippingNoteDraftRef.current = shippingNoteDraft;
+  }, [shippingNoteDraft]);
+
+  const saveShippingNoteIfNeeded = async (): Promise<boolean> => {
     if (!cart?.addNoteApi) {
-      return;
+      return true;
     }
-    if (!shippingNoteDirty) {
-      return;
+    if (shippingNoteSavingPromiseRef.current) {
+      return shippingNoteSavingPromiseRef.current;
     }
-    if (shippingNoteSavingRef.current) {
-      return;
-    }
-    const currentNote = cart?.shippingNote || '';
-    if (shippingNoteDraft === currentNote) {
-      if (shippingNoteDirty) {
-        setShippingNoteDirty(false);
-      }
-      return;
-    }
-    if (shippingNoteTimeoutRef.current) {
-      clearTimeout(shippingNoteTimeoutRef.current);
-    }
-    shippingNoteTimeoutRef.current = setTimeout(async () => {
-      shippingNoteSavingRef.current = true;
-      setShippingNoteSaving(true);
-      try {
-        const response = await fetch(cart.addNoteApi, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ note: shippingNoteDraft })
-        });
-        const json = await response.json().catch(() => ({}));
-        if (!response.ok || json?.error) {
-          throw new Error(
-            json?.error?.message || _('Failed to set shipping note')
-          );
+
+    const runSave = async (): Promise<boolean> => {
+      while (true) {
+        const currentDraft = shippingNoteDraftRef.current;
+        if (currentDraft === shippingNoteLastSavedRef.current) {
+          setShippingNoteDirty(false);
+          return true;
         }
-        setShippingNoteDirty(false);
-      } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : _('Failed to set shipping note')
-        );
-      } finally {
-        shippingNoteSavingRef.current = false;
-        setShippingNoteSaving(false);
-      }
-    }, 600);
-    return () => {
-      if (shippingNoteTimeoutRef.current) {
-        clearTimeout(shippingNoteTimeoutRef.current);
+
+        setShippingNoteSaving(true);
+        try {
+          const response = await fetch(cart.addNoteApi, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: currentDraft })
+          });
+          const json = await response.json().catch(() => ({}));
+          if (!response.ok || json?.error) {
+            throw new Error(
+              json?.error?.message || _('Failed to set shipping note')
+            );
+          }
+          shippingNoteLastSavedRef.current = currentDraft;
+
+          if (shippingNoteDraftRef.current === currentDraft) {
+            setShippingNoteDirty(false);
+            return true;
+          }
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : _('Failed to set shipping note')
+          );
+          return false;
+        } finally {
+          setShippingNoteSaving(false);
+        }
       }
     };
-  }, [cart?.addNoteApi, cart?.shippingNote, shippingNoteDraft, shippingNoteDirty]);
+
+    const promise = runSave().finally(() => {
+      shippingNoteSavingPromiseRef.current = null;
+    });
+    shippingNoteSavingPromiseRef.current = promise;
+    return promise;
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const flush = () => saveShippingNoteIfNeeded();
+    window.__checkoutFlushOrderComment = flush;
+    return () => {
+      if (window.__checkoutFlushOrderComment === flush) {
+        delete window.__checkoutFlushOrderComment;
+      }
+    };
+  }, [cart?.addNoteApi, saveShippingNoteIfNeeded]);
 
   return (
     <div className="checkout-comment">
@@ -90,16 +118,14 @@ export function OrderComment() {
               setShippingNoteDirty(true);
             }
           }}
+          onBlur={() => {
+            void saveShippingNoteIfNeeded();
+          }}
           placeholder={_('Add a comment for the order')}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none mb-0"
           rows={3}
         />
       </div>
-      {shippingNoteSaving ? (
-        <div className="mt-2 text-xs text-gray-500">
-          {_('Saving...')}
-        </div>
-      ) : null}
     </div>
   );
 }
