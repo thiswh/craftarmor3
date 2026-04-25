@@ -2951,9 +2951,13 @@ export function Shipment() {
 
     const preferredAddresses =
       deliveryType === 'pickup' ? pickupAddresses : courierAddresses;
+    const fallbackAddresses =
+      deliveryType === 'pickup' ? courierAddresses : pickupAddresses;
     const targetAddress =
       preferredAddresses.find((address) => address.isDefault) ||
-      preferredAddresses[0];
+      preferredAddresses[0] ||
+      fallbackAddresses.find((address) => address.isDefault) ||
+      fallbackAddresses[0];
     if (!targetAddress) {
       return;
     }

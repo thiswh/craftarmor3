@@ -88,6 +88,42 @@ const retry = async (fn, retries = 3, delay = 1000) => {
   }
 };
 
+const normalizeAddressForCheckout = (address) => {
+  if (!address || typeof address !== 'object') {
+    return null;
+  }
+
+  const provinceValue =
+    typeof address.province === 'string'
+      ? address.province
+      : address.province?.code || address.province?.name || '';
+  const countryValue =
+    typeof address.country === 'string'
+      ? address.country
+      : address.country?.code || address.country?.name || '';
+
+  return {
+    full_name: address.full_name || address.fullName || '',
+    telephone: address.telephone || '',
+    address_1: address.address_1 || address.address1 || '',
+    address_2: address.address_2 || address.address2 || '',
+    city: address.city || '',
+    province: provinceValue || '',
+    country: countryValue || '',
+    postcode: address.postcode || '',
+    courier_note: address.courier_note || address.courierNote || ''
+  };
+};
+
+const hasRequiredAddressFields = (address) =>
+  Boolean(
+    address?.full_name?.trim() &&
+      address?.address_1?.trim() &&
+      address?.province?.trim() &&
+      address?.country?.trim() &&
+      address?.postcode?.trim()
+  );
+
 export function CheckoutProvider({
   children,
   placeOrderApi,
@@ -189,13 +225,47 @@ export function CheckoutProvider({
 
     disableForm();
     dispatch({ type: 'SET_PLACING_ORDER', payload: true });
+    const checkoutDataPayload = { ...(state.checkoutData || {}) };
+    const normalizedShippingAddress =
+      [
+        checkoutDataPayload.shippingAddress,
+        form.getValues('shippingAddress'),
+        cartState.data?.shippingAddress
+      ]
+        .map(normalizeAddressForCheckout)
+        .find(hasRequiredAddressFields) || null;
+
+    if (normalizedShippingAddress) {
+      checkoutDataPayload.shippingAddress = normalizedShippingAddress;
+    } else {
+      delete checkoutDataPayload.shippingAddress;
+    }
+
+    const normalizedBillingAddress =
+      [
+        checkoutDataPayload.billingAddress,
+        checkoutDataPayload.shippingAddress,
+        form.getValues('billingAddress'),
+        form.getValues('shippingAddress'),
+        cartState.data?.billingAddress,
+        cartState.data?.shippingAddress
+      ]
+        .map(normalizeAddressForCheckout)
+        .find(hasRequiredAddressFields) || null;
+
+    if (normalizedBillingAddress) {
+      checkoutDataPayload.billingAddress = normalizedBillingAddress;
+    } else {
+      delete checkoutDataPayload.billingAddress;
+    }
+
     const response = await retry(() =>
       fetch(cartState.data?.checkoutApi, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cart_id: cartId,
-          ...state.checkoutData
+          ...checkoutDataPayload
         })
       })
     );
@@ -211,6 +281,8 @@ export function CheckoutProvider({
     return json.data;
   }, [
     cartState.data?.checkoutApi,
+    cartState.data?.billingAddress,
+    cartState.data?.shippingAddress,
     cartId,
     state.checkoutData,
     form,

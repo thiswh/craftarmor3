@@ -3,7 +3,6 @@ import {
   useCheckout,
   useCheckoutDispatch
 } from '@components/frontStore/checkout/CheckoutContext.js';
-import { BillingAddress } from '@components/frontStore/checkout/payment/BillingAddress.js';
 import { PaymentMethods } from '@components/frontStore/checkout/payment/PaymentMethods.js';
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
 import React, { useEffect } from 'react';
@@ -20,7 +19,6 @@ export function Payment() {
   });
 
   const availablePaymentMethods = cart?.availablePaymentMethods;
-  const billingAddress = cart?.billingAddress;
   const addingBillingAddress = loadingStates?.addingBillingAddress;
   const hasDelivery = Boolean(cart?.shippingMethod && cart?.shippingAddress);
   const hasInvalidItems = Boolean(checkoutData?.hasInvalidItems);
@@ -70,7 +68,6 @@ export function Payment() {
           methods={availablePaymentMethods?.map((method) => ({ ...method }))}
           isLoading={addingBillingAddress}
         />
-        <BillingAddress billingAddress={billingAddress} />
       </div>
     </div>
   );
