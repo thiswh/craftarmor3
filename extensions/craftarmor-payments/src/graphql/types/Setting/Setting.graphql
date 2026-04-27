@@ -1,0 +1,7 @@
+extend type Setting {
+  yookassaSbpStatus: Int
+  yookassaSbpDisplayName: String
+  yookassaShopId: String
+  yookassaSecretKey: String
+}
+

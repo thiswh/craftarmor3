@@ -23,6 +23,12 @@
         "resolve": "extensions/craftarmor-shipping",
         "enabled": true,
         "priority": 10
+      },
+      {
+        "name": "craftarmor-payments",
+        "resolve": "extensions/craftarmor-payments",
+        "enabled": true,
+        "priority": 20
       }
     ],
     "session": {
