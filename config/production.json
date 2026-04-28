@@ -1,0 +1,11 @@
+{
+  "shop": {
+    "homeUrl": "https://craftarmor.ru"
+  },
+  "system": {
+    "yookassa": {
+      "shopId": "380066",
+      "secretKey": "live_2N3VoYV71T9vLnbQMD9KbuZQX_UnrtMctFLGmtKCjDM"
+    }
+  }
+}

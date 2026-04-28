@@ -1,6 +1,12 @@
 {
+  "shop": {
+    "homeUrl": "http://localhost:3000"
+  },
   "system": {
-    "theme": "craftarmor"
+    "theme": "craftarmor",
+    "yookassa": {
+      "shopId": "384567",
+      "secretKey": "test_ko2A2pHMb-Bc5SyVt-wPCCTm0curwK_BpnIMGqMEVsE"
+    }
   }
 }
-

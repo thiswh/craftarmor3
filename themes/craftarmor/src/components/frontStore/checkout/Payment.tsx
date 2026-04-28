@@ -7,7 +7,6 @@ import { PaymentMethods } from '@components/frontStore/checkout/payment/PaymentM
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
 import React, { useEffect } from 'react';
 import { useWatch } from 'react-hook-form';
-import { toast } from 'react-toastify';
 
 export function Payment() {
   const { data: cart, loadingStates } = useCartState();
@@ -18,33 +17,50 @@ export function Payment() {
     control: form.control
   });
 
-  const availablePaymentMethods = cart?.availablePaymentMethods;
+  const availablePaymentMethods = Array.isArray(cart?.availablePaymentMethods)
+    ? cart.availablePaymentMethods
+    : [];
+  const singlePaymentMethod =
+    availablePaymentMethods.length === 1 ? availablePaymentMethods[0] : null;
+  const isSingleSbpMethod = singlePaymentMethod?.code === 'yookassa_sbp';
   const addingBillingAddress = loadingStates?.addingBillingAddress;
   const hasDelivery = Boolean(cart?.shippingMethod && cart?.shippingAddress);
   const hasInvalidItems = Boolean(checkoutData?.hasInvalidItems);
   const canShowPayment = hasDelivery && !hasInvalidItems;
 
   useEffect(() => {
-    const updatePaymentMethod = async () => {
-      try {
-        const selected = form.getValues('paymentMethod');
-        const methodDetails = availablePaymentMethods?.find(
-          (method) => method.code === selected
-        );
-        if (!methodDetails) {
-          throw new Error('Please select a valid payment method');
-        }
-        updateCheckoutData({ paymentMethod: methodDetails.code });
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : _('Failed to update shipment')
-        );
-      }
-    };
-    if (paymentMethod) {
-      updatePaymentMethod();
+    if (!paymentMethod || availablePaymentMethods.length === 0) {
+      return;
+    }
+    const methodDetails = availablePaymentMethods.find(
+      (method) => method.code === paymentMethod
+    );
+    if (methodDetails) {
+      updateCheckoutData({ paymentMethod: methodDetails.code });
     }
   }, [paymentMethod, availablePaymentMethods, form, updateCheckoutData]);
+
+  useEffect(() => {
+    if (!singlePaymentMethod || !canShowPayment) {
+      return;
+    }
+
+    const selected = form.getValues('paymentMethod');
+    if (selected !== singlePaymentMethod.code) {
+      form.setValue('paymentMethod', singlePaymentMethod.code, {
+        shouldDirty: false
+      });
+    }
+    if (checkoutData?.paymentMethod !== singlePaymentMethod.code) {
+      updateCheckoutData({ paymentMethod: singlePaymentMethod.code });
+    }
+  }, [
+    canShowPayment,
+    checkoutData?.paymentMethod,
+    form,
+    singlePaymentMethod,
+    updateCheckoutData
+  ]);
 
   return (
     <div className="checkout-shipment">
@@ -64,10 +80,27 @@ export function Payment() {
         </div>
       ) : null}
       <div className={canShowPayment ? '' : 'pointer-events-none opacity-60'}>
-        <PaymentMethods
-          methods={availablePaymentMethods?.map((method) => ({ ...method }))}
-          isLoading={addingBillingAddress}
-        />
+        {singlePaymentMethod ? (
+          <div className="rounded-lg border border-gray-200 bg-white px-3 py-3">
+            <div className="text-xs text-gray-500">{_('Payment method')}</div>
+            <div className="mt-1 flex items-center gap-2 text-sm font-medium text-gray-900">
+              {isSingleSbpMethod ? (
+                <img
+                  src="/images/sbp.svg"
+                  alt="SBP"
+                  className="h-5 w-auto"
+                  loading="lazy"
+                />
+              ) : null}
+              <span>{_(singlePaymentMethod.name)}</span>
+            </div>
+          </div>
+        ) : (
+          <PaymentMethods
+            methods={availablePaymentMethods.map((method) => ({ ...method }))}
+            isLoading={addingBillingAddress}
+          />
+        )}
       </div>
     </div>
   );
