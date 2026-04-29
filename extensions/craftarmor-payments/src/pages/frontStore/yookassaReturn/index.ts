@@ -94,7 +94,7 @@ export default async (request, response) => {
       request,
       response,
       successUrl,
-      'Payment is still being processed. We will update status automatically.',
+      'Оплата не завершена? Попробуйте снова.',
       'info'
     );
   } catch (e) {

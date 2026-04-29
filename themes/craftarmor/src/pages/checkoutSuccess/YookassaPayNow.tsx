@@ -38,6 +38,25 @@ export default function YookassaPayNow({
 }: Props) {
   const [loading, setLoading] = React.useState(false);
 
+  React.useEffect(() => {
+    const resetLoading = () => setLoading(false);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        resetLoading();
+      }
+    };
+
+    window.addEventListener('pageshow', resetLoading);
+    window.addEventListener('focus', resetLoading);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pageshow', resetLoading);
+      window.removeEventListener('focus', resetLoading);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
   const paymentMethod = String(order?.paymentMethod || '').trim();
   const paymentStatusCode = String(order?.paymentStatus?.code || '').trim();
   const canPayNow =

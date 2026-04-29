@@ -31,12 +31,30 @@ export default function YookassaSbpMethod({
   const { registerPaymentComponent } = useCheckoutDispatch();
 
   useEffect(() => {
-    if (!orderPlaced || !orderId || paymentMethod !== 'yookassa_sbp') {
-      return;
-    }
+    const redirectToSuccess = () => {
+      if (!orderPlaced || !orderId || paymentMethod !== 'yookassa_sbp') {
+        return;
+      }
 
-    // For YooKassa we now place order first and continue payment on success page.
-    window.location.href = `${checkoutSuccessUrl}/${orderId}`;
+      // For YooKassa we place order first and continue payment on success page.
+      window.location.href = `${checkoutSuccessUrl}/${orderId}`;
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        redirectToSuccess();
+      }
+    };
+
+    redirectToSuccess();
+    window.addEventListener('pageshow', redirectToSuccess);
+    window.addEventListener('focus', redirectToSuccess);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pageshow', redirectToSuccess);
+      window.removeEventListener('focus', redirectToSuccess);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [checkoutSuccessUrl, orderId, orderPlaced, paymentMethod]);
 
   useEffect(() => {

@@ -72,3 +72,8 @@ body:has(.checkout-page) .wrapper .content {
 body:has(.checkout-page) .wrapper .footer {
   margin-top: 0 !important;
 }
+
+/* Hide "Inclusive of tax ..." note in checkout totals */
+.checkout-page .cart__total__summary .summary__row.grand-total .italic.font-normal {
+  display: none;
+}
