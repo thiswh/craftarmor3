@@ -161,6 +161,7 @@ export default async function shippingCalculateCourier(
   response: Response
 ) {
   try {
+    const isInternalRequest = isInternalEvershopAxiosRequest(request);
     const cartId = String(request.params.cart_id || '');
     const methodId = String(request.params.method_id || '');
     const checkInvalidOnly =
@@ -177,22 +178,24 @@ export default async function shippingCalculateCourier(
       return;
     }
 
-    const sessionCartUuid = await getSessionCartUuid(request);
-    if (!sessionCartUuid) {
-      setErrorResponse(response, 401, {
-        success: false,
-        message: 'Session is required',
-        data: { cost: 0 }
-      });
-      return;
-    }
-    if (sessionCartUuid !== cartId) {
-      setErrorResponse(response, 403, {
-        success: false,
-        message: 'Access denied for this cart',
-        data: { cost: 0 }
-      });
-      return;
+    if (!isInternalRequest) {
+      const sessionCartUuid = await getSessionCartUuid(request);
+      if (!sessionCartUuid) {
+        setErrorResponse(response, 401, {
+          success: false,
+          message: 'Session is required',
+          data: { cost: 0 }
+        });
+        return;
+      }
+      if (sessionCartUuid !== cartId) {
+        setErrorResponse(response, 403, {
+          success: false,
+          message: 'Access denied for this cart',
+          data: { cost: 0 }
+        });
+        return;
+      }
     }
 
     if (methodId !== COURIER_METHOD_UUID) {

@@ -3,8 +3,7 @@ import {
   useCheckoutDispatch
 } from '@components/frontStore/checkout/CheckoutContext.js';
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
-import React, { useEffect, useRef } from 'react';
-import { toast } from 'react-toastify';
+import React, { useEffect } from 'react';
 
 function SbpLogo({ width = 64 }: { width?: number }) {
   return (
@@ -19,13 +18,10 @@ function SbpLogo({ width = 64 }: { width?: number }) {
 }
 
 export default function YookassaSbpMethod({
-  setting,
-  createPaymentApi
+  setting
 }: {
   setting: { yookassaSbpDisplayName: string };
-  createPaymentApi: string;
 }) {
-  const createRequestStartedRef = useRef(false);
   const {
     checkoutSuccessUrl,
     orderPlaced,
@@ -35,48 +31,13 @@ export default function YookassaSbpMethod({
   const { registerPaymentComponent } = useCheckoutDispatch();
 
   useEffect(() => {
-    const createPayment = async () => {
-      const response = await fetch(createPaymentApi, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: orderId })
-      });
-      const payload = await response.json();
-      if (!response.ok || payload?.error) {
-        throw new Error(
-          payload?.error?.message || _('Failed to create YooKassa payment')
-        );
-      }
-      return payload?.data || {};
-    };
-
-    const redirectToPayment = async () => {
-      try {
-        const data = await createPayment();
-        if (data.confirmationUrl) {
-          window.location.href = data.confirmationUrl;
-          return;
-        }
-        if (data.redirectUrl) {
-          window.location.href = data.redirectUrl;
-          return;
-        }
-        window.location.href = `${checkoutSuccessUrl}/${orderId}`;
-      } catch (e: any) {
-        createRequestStartedRef.current = false;
-        toast.error(e?.message || _('Unable to start payment'));
-      }
-    };
-
     if (!orderPlaced || !orderId || paymentMethod !== 'yookassa_sbp') {
       return;
     }
-    if (createRequestStartedRef.current) {
-      return;
-    }
-    createRequestStartedRef.current = true;
-    redirectToPayment();
-  }, [createPaymentApi, checkoutSuccessUrl, orderId, orderPlaced, paymentMethod]);
+
+    // For YooKassa we now place order first and continue payment on success page.
+    window.location.href = `${checkoutSuccessUrl}/${orderId}`;
+  }, [checkoutSuccessUrl, orderId, orderPlaced, paymentMethod]);
 
   useEffect(() => {
     registerPaymentComponent('yookassa_sbp', {
@@ -90,7 +51,7 @@ export default function YookassaSbpMethod({
         <div className="flex justify-center text-gray-500">
           <div className="w-2/3 text-center p-4">
             {_(
-              'After clicking the button, you will be redirected to YooKassa to complete SBP payment.'
+              'Place the order first. You can complete payment on the next step.'
             )}
           </div>
         </div>
@@ -114,10 +75,10 @@ export default function YookassaSbpMethod({
           >
             <span className="flex items-center justify-center gap-2">
               {loadingStates.placingOrder
-                ? _('Creating payment...')
+                ? _('Placing order...')
                 : orderPlaced
-                  ? _('Redirecting to payment...')
-                  : _('Pay via SBP')}
+                  ? _('Redirecting...')
+                  : _('Place order')}
             </span>
           </button>
         );
@@ -138,7 +99,5 @@ export const query = `
     setting {
       yookassaSbpDisplayName
     }
-    createPaymentApi: url(routeId: "yookassaCreatePayment")
   }
 `;
-

@@ -55,3 +55,20 @@
 .checkout-comment h3 {
   margin: 0 0 0.5rem;
 }
+
+body:has(.checkout-page) .wrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+body:has(.checkout-page) .wrapper .content {
+  flex: 1 1 auto;
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+  min-height: auto !important;
+}
+
+body:has(.checkout-page) .wrapper .footer {
+  margin-top: 0 !important;
+}

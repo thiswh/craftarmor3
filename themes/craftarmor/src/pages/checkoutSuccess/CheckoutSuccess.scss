@@ -1,0 +1,112 @@
+.checkout-success-page {
+  width: 100%;
+  overflow-x: hidden;
+  padding-bottom: 1rem;
+  min-height: auto;
+}
+
+.checkout-success-page__content {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0.85rem 0 1.5rem;
+}
+
+/* Hide default success info block */
+.checkout-success-customer-info {
+  display: none;
+}
+
+.checkout-success-hero {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.checkout-success-ozon-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.05);
+}
+
+.checkout-success-ozon-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.checkout-success-ozon-check {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  background: transparent;
+  color: #111827;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.checkout-success-ozon-title {
+  color: #111827;
+  font-size: clamp(1.4rem, 2.9vw, 1.95rem);
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.checkout-success-ozon-subtitle {
+  color: #4b5563;
+  max-width: 34rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.checkout-success-ozon-help {
+  color: #6b7280;
+}
+
+.checkout-success-paid {
+  color: #111827;
+}
+
+.checkout-success-amount-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.checkout-success-amount-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+.checkout-success-amount-value {
+  color: #111827;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+body:has(.checkout-success-page) .wrapper .content {
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+  min-height: auto !important;
+  flex: 1 1 auto;
+}
+
+body:has(.checkout-success-page) .wrapper .footer {
+  margin-top: 0 !important;
+}
+
+body:has(.checkout-success-page) .wrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
