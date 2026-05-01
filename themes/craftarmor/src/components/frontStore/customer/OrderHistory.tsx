@@ -5,6 +5,65 @@ import { useCustomer } from '@components/frontStore/customer/CustomerContext.jsx
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
 import React from 'react';
 
+const formatActivityComment = (rawComment: string) => {
+  const comment = String(rawComment || '')
+    .replace(/\s*Payment ID:\s*[a-z0-9-]+/gi, '')
+    .replace(/\s*Transaction ID:\s*[a-z0-9-]+/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\.+\s*$/, '')
+    .trim();
+  if (!comment) return '';
+
+  if (/^order created$/i.test(comment)) {
+    return _('Order created');
+  }
+  if (/^order was shipped$/i.test(comment)) {
+    return _('Order was shipped');
+  }
+  if (/^shipment information updated$/i.test(comment)) {
+    return _('Shipment information updated');
+  }
+  if (/^order delivered$/i.test(comment)) {
+    return _('Order delivered');
+  }
+  if (/^order canceled/i.test(comment)) {
+    return _('Order canceled');
+  }
+  if (/^yookassa payment succeeded/i.test(comment)) {
+    return _('Payment succeeded');
+  }
+  if (/^yookassa payment canceled/i.test(comment)) {
+    return _('Payment canceled');
+  }
+  if (/^yookassa payment failed/i.test(comment)) {
+    return _('Payment failed');
+  }
+
+  if (/^customer paid using cash/i.test(comment)) {
+    return _('Payment received');
+  }
+  if (/^customer paid using paypal/i.test(comment)) {
+    return _('Payment succeeded');
+  }
+  if (/^captured the payment/i.test(comment)) {
+    return _('Payment captured');
+  }
+  if (/^customer authorized the payment using paypal/i.test(comment)) {
+    return _('Payment authorized');
+  }
+  if (/^customer paid by using stripe/i.test(comment)) {
+    return _('Payment succeeded');
+  }
+  if (/^customer authorized by using stripe/i.test(comment)) {
+    return _('Payment authorized');
+  }
+  if (/^refunded\s/i.test(comment)) {
+    return _('Refund issued');
+  }
+
+  return comment;
+};
+
 const OrderDetail = ({ order }: { order: any }) => {
   return (
     <div className="order border-divider">
@@ -85,6 +144,34 @@ const StatusLine = ({ text, badge }: { text: string; badge?: string }) => {
 
 const OrderDetailsModal = ({ order }: { order: any }) => {
   const items = Array.isArray(order?.items) ? order.items : [];
+  const activities = Array.isArray(order?.activities) ? order.activities : [];
+  const groupedActivities = activities.reduce(
+    (
+      acc: Array<{
+        date: string;
+        items: Array<{ comment: string; customerNotified: string | number; time: string }>;
+      }>,
+      activity: any
+    ) => {
+      const date = String(activity?.createdAt?.date || '');
+      const time = String(activity?.createdAt?.time || '');
+      const rawComment = String(activity?.comment || '');
+      const comment = formatActivityComment(rawComment);
+      const customerNotified = activity?.customerNotified ?? 0;
+      if (!comment) {
+        return acc;
+      }
+      const last = acc[acc.length - 1];
+      if (last && last.date === date) {
+        last.items.push({ comment, customerNotified, time });
+        return acc;
+      }
+      acc.push({ date, items: [{ comment, customerNotified, time }] });
+      return acc;
+    },
+    []
+  );
+
   return (
     <div className="space-y-4">
       <div className="rounded border border-gray-200 bg-white">
@@ -166,6 +253,38 @@ const OrderDetailsModal = ({ order }: { order: any }) => {
           </div>
         </div>
       </div>
+
+      {groupedActivities.length > 0 ? (
+        <div className="rounded border border-gray-200 bg-white p-4">
+          <div className="mb-3 font-semibold">{_('Activities')}</div>
+          <ul className="space-y-3">
+            {groupedActivities.map((group, gi) => (
+              <li key={`${group.date}-${gi}`} className="space-y-2">
+                <div className="text-sm font-semibold text-gray-700">{group.date}</div>
+                <ul className="space-y-2">
+                  {group.items.map((activity, ai) => (
+                    <li
+                      key={`${group.date}-${activity.time}-${ai}`}
+                      className="grid grid-cols-[auto_1fr_auto] items-center gap-3"
+                    >
+                      <span className="h-2 w-2 rounded-full bg-gray-400" />
+                      <div className="text-sm">
+                        <div>{activity.comment}</div>
+                        {parseInt(String(activity.customerNotified), 10) === 1 ? (
+                          <div className="text-xs text-gray-500">
+                            {_('Customer was notified')}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-gray-500">{activity.time}</div>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 };

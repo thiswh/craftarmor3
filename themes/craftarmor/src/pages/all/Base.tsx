@@ -161,6 +161,16 @@ export const query = `
           code
           badge
         }
+        activities {
+          comment
+          customerNotified
+          createdAt {
+            value
+            timezone
+            date: text(format: "LLL dd")
+            time: text(format: "t")
+          }
+        }
         items {
           ...ShoppingCartItem
           orderItemId

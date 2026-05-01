@@ -158,9 +158,10 @@
         }
       }
     },
+    "adminCarrierCodes": ["cdek"],
     "carriers": {
-      "default": {
-        "name": "Default"
+      "cdek": {
+        "name": "CDEK"
       }
     }
   }
