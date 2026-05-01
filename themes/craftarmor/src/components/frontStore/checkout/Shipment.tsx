@@ -222,6 +222,9 @@ const normalizeRecipientName = (value?: string | null) =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const normalizeRecipientNameInput = (value?: string | null) =>
+  String(value || '').replace(/\s{2,}/g, ' ');
+
 const normalizeRecipientPhoneDigits = (value?: string | null) =>
   String(value || '').replace(/\D+/g, '');
 
@@ -4112,7 +4115,7 @@ export function Shipment() {
                           onChange={(event) => {
                             form.setValue(
                               'recipient.full_name',
-                              normalizeRecipientName(event.target.value),
+                              normalizeRecipientNameInput(event.target.value),
                               { shouldDirty: true }
                             );
                           }}
