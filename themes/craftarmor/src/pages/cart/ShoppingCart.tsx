@@ -7,6 +7,7 @@ import { ShoppingCartEmpty } from '@components/frontStore/cart/ShoppingCartEmpty
 import { _ } from '@evershop/evershop/lib/locale/translate/_';
 import React from 'react';
 import { toast } from 'react-toastify';
+import './ShoppingCart.scss';
 
 const Title = ({ title }: { title: string }) => {
   return (
@@ -76,7 +77,7 @@ export default function ShoppingCart({ checkoutUrl }: { checkoutUrl: string }) {
   );
 
   return (
-    <div className="cart page-width">
+    <div className="cart-page cart page-width">
       {hasItems ? (
         <>
           <Title title={_('Shopping Cart')} />
@@ -91,6 +92,7 @@ export default function ShoppingCart({ checkoutUrl }: { checkoutUrl: string }) {
                     showPriceIncludingTax={showPriceIncludingTax}
                     loading={loading}
                     onRemoveItem={onRemoveItem}
+                    selectedCount={selectedCount}
                     allSelected={allSelected}
                     selectionBusy={selectionBusy}
                     onToggleAll={updateAllSelection}
@@ -102,12 +104,10 @@ export default function ShoppingCart({ checkoutUrl }: { checkoutUrl: string }) {
             <div className="col-span-1 md:col-span-1">
               <Area id="shoppingCartBeforeSummary" noOuter />
               <div className="grid grid-cols-1 gap-5 cart-summary">
-                <h4>{_('Order summary')}</h4>
+                <div className="m-0 flex h-10 items-center text-2xl font-semibold leading-none">
+                  {_('Order summary')}
+                </div>
                 <div className="cart__total__summary font-semibold">
-                  <div className="summary-row flex justify-between gap-7 py-2">
-                    <span>{_('Products (${count})', { count: String(selectedCount) })}</span>
-                    <span>{formattedSelectedSubtotal}</span>
-                  </div>
                   <div className="summary__row grand-total flex justify-between py-2">
                     <span className="self-center font-bold">{_('Total')}</span>
                     <span className="font-bold">{formattedSelectedSubtotal}</span>
@@ -115,12 +115,16 @@ export default function ShoppingCart({ checkoutUrl }: { checkoutUrl: string }) {
                 </div>
               </div>
               <Area id="shoppingCartBeforeCheckoutButton" noOuter />
-              <div className="shopping-cart-checkout-btn flex justify-between mt-5">
+              <div className="shopping-cart-checkout-btn mt-5 w-full">
                 <Button
-                  url={selectedCount > 0 ? checkoutUrl : '#'}
+                  url={selectedCount > 0 ? checkoutUrl : undefined}
                   title={_('CHECKOUT')}
                   variant="primary"
-                  disabled={selectedCount === 0}
+                  className={`w-full text-center ${
+                    selectedCount === 0
+                      ? 'opacity-50 pointer-events-none cursor-not-allowed'
+                      : ''
+                  }`}
                 />
               </div>
               {selectedCount === 0 ? (

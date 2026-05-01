@@ -24,6 +24,7 @@ export const DefaultCartItemList = ({
   onSort,
   currentSort,
   onRemoveItem,
+  selectedCount = 0,
   allSelected = false,
   selectionBusy = false,
   onToggleAll
@@ -34,6 +35,7 @@ export const DefaultCartItemList = ({
   onSort?: (...args: any[]) => void;
   currentSort?: any;
   onRemoveItem?: (cartItemId: number) => void;
+  selectedCount?: number;
   allSelected?: boolean;
   selectionBusy?: boolean;
   onToggleAll?: (selected: boolean) => void;
@@ -82,18 +84,33 @@ export const DefaultCartItemList = ({
       key: 'selection',
       header: {
         label: (
-          <div className="flex items-center justify-center">
+          <label className="relative inline-flex h-4 w-4 items-center justify-center">
             <input
               type="checkbox"
               checked={allSelected}
               disabled={selectionBusy || loading}
               onChange={(e) => onToggleAll?.(e.target.checked)}
-              className="h-4 w-4 cursor-pointer rounded border-gray-500 accent-black focus:ring-2 focus:ring-black/20"
+              className="peer absolute inset-0 m-0 cursor-pointer opacity-0"
               aria-label={_('Select all items')}
             />
-          </div>
+            <span className="h-4 w-4 rounded border border-gray-500 bg-white transition-colors peer-checked:border-black peer-checked:bg-black peer-disabled:opacity-60 peer-focus:ring-2 peer-focus:ring-black/20" />
+            <svg
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+              className="pointer-events-none absolute h-[10px] w-[10px] text-white opacity-0 peer-checked:opacity-100"
+            >
+              <path
+                d="M13.4 4.6L6.6 11.4L2.6 7.4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </label>
         ),
-        className: 'w-[48px]'
+        className: 'w-[48px] align-middle'
       },
       className: 'align-top w-[48px]',
       sortable: false,
@@ -103,21 +120,41 @@ export const DefaultCartItemList = ({
         const isBusy = Boolean(selectionLoading[uuid]);
         return (
           <div className="pt-2">
-            <input
-              type="checkbox"
-              checked={checked}
-              disabled={loading || isBusy}
-              onChange={(e) => updateSelection(uuid, e.target.checked)}
-              className="h-4 w-4 cursor-pointer rounded border-gray-500 accent-black focus:ring-2 focus:ring-black/20"
-              aria-label={_('Select item')}
-            />
+            <label className="relative inline-flex h-4 w-4 items-center justify-center">
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={loading || isBusy}
+                onChange={(e) => updateSelection(uuid, e.target.checked)}
+                className="peer absolute inset-0 m-0 cursor-pointer opacity-0"
+                aria-label={_('Select item')}
+              />
+              <span className="h-4 w-4 rounded border border-gray-500 bg-white transition-colors peer-checked:border-black peer-checked:bg-black peer-disabled:opacity-60 peer-focus:ring-2 peer-focus:ring-black/20" />
+              <svg
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+                className="pointer-events-none absolute h-[10px] w-[10px] text-white opacity-0 peer-checked:opacity-100"
+              >
+                <path
+                  d="M13.4 4.6L6.6 11.4L2.6 7.4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </label>
           </div>
         );
       }
     },
     {
       key: 'productInfo',
-      header: { label: _('Product'), className: '' },
+      header: {
+        label: _('Products (${count})', { count: String(selectedCount) }),
+        className: ''
+      },
       className: 'font-medium align-top',
       sortable: false,
       render: (row: any) => {
@@ -172,7 +209,10 @@ export const DefaultCartItemList = ({
     },
     {
       key: 'qty',
-      header: { label: _('Quantity'), className: 'text-center' },
+      header: {
+        label: _('Quantity'),
+        className: 'text-center'
+      },
       sortable: true,
       render: (row: any) => {
         return (
@@ -209,7 +249,10 @@ export const DefaultCartItemList = ({
     },
     {
       key: 'lineTotal',
-      header: { label: _('Total'), className: 'flex justify-end' },
+      header: {
+        label: _('Total'),
+        className: 'flex justify-end'
+      },
       sortable: true,
       render: (row: any) => {
         const totalValue = showPriceIncludingTax
@@ -242,7 +285,7 @@ export const DefaultCartItemList = ({
         emptyMessage={_('Your cart is empty')}
         onSort={onSort}
         currentSort={currentSort}
-        className="cart__items__table border-none table-auto border-spacing-y-2 border-separate w-full"
+        className="cart__items__table border-none table-auto w-full"
       />
       <Area id="miniCartItemListAfter" noOuter />
       <style>{`
@@ -251,9 +294,22 @@ export const DefaultCartItemList = ({
         }
         .cart__items__table th {
           border: none;
+          vertical-align: middle;
         }
         .cart__items__table td {
           border: none;
+        }
+        .cart__items__table tbody.divide-y > :not([hidden]) ~ :not([hidden]) {
+          border-top-width: 0;
+        }
+        .cart__items__table thead th > div {
+          min-height: 16px;
+          align-items: center;
+        }
+        .cart__items__table thead th > div > span {
+          display: inline-flex;
+          align-items: center;
+          line-height: 1;
         }
       `}</style>
     </>
