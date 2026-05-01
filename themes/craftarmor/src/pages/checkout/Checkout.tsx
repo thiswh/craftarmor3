@@ -80,7 +80,7 @@ export default function CheckoutPage({
           <CartItems>
             {({ items, loading, showPriceIncludingTax }) => (
               <CartSummaryItemsList
-                items={items}
+                items={(items || []).filter((item: any) => item.isSelected !== false)}
                 loading={loading}
                 showPriceIncludingTax={showPriceIncludingTax}
               />

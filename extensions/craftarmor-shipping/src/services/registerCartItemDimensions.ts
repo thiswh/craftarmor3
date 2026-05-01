@@ -10,6 +10,32 @@ const parseStoredNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const parseStoredBoolean = (value: unknown): boolean => {
+  if (value === null || value === undefined || value === '') {
+    return true;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (
+    normalized === 'false' ||
+    normalized === '0' ||
+    normalized === 'no' ||
+    normalized === 'f' ||
+    normalized === 'off'
+  ) {
+    return false;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 't' || normalized === 'on') {
+    return true;
+  }
+  return true;
+};
+
 const resolveStoredOrProduct = async (
   value: unknown,
   getter: (product: any) => unknown,
@@ -44,6 +70,14 @@ export default function registerCartItemDimensions(fields: any[]) {
 
   return [
     ...updatedFields,
+    {
+      key: 'is_selected',
+      resolvers: [
+        async function resolver(value: unknown) {
+          return parseStoredBoolean(value);
+        }
+      ]
+    },
     {
       key: 'product_length',
       resolvers: [

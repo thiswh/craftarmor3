@@ -5,6 +5,7 @@ extend interface ShoppingCartItem {
 }
 
 extend type CartItem {
+  isSelected: Boolean
   productLength: Float
   productWidth: Float
   productHeight: Float

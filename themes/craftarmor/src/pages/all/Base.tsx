@@ -289,8 +289,13 @@ export const fragments = `
     }
   }
 
+  fragment CartItemSelection on CartItem {
+    isSelected
+  }
+
   fragment ShoppingCartItem on ShoppingCartItem {
     uuid
+    ...CartItemSelection
     productId
     productSku
     productName
